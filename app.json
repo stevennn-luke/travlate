@@ -9,17 +9,30 @@
     "userInterfaceStyle": "automatic",
     "newArchEnabled": true,
     "ios": {
-      "supportsTablet": true
+      "supportsTablet": true,
+      "infoPlist": {
+        "NSLocationWhenInUseUsageDescription": "This app needs access to location to show your current position on the map.",
+        "NSSpeechRecognitionUsageDescription": "Allow $travlate to use speech recognition.",
+        "NSMicrophoneUsageDescription": "Allow $travlate to use the microphone."
+      }
     },
     "android": {
       "adaptiveIcon": {
         "backgroundColor": "#E6F4FE",
-        "foregroundImage": "./assets/images/android-icon-foreground.png",
-        "backgroundImage": "./assets/images/android-icon-background.png",
-        "monochromeImage": "./assets/images/android-icon-monochrome.png"
+        "foregroundImage": "./assets/images/icon.png"
       },
       "edgeToEdgeEnabled": true,
-      "predictiveBackGestureEnabled": false
+      "predictiveBackGestureEnabled": false,
+      "permissions": [
+        "ACCESS_FINE_LOCATION",
+        "ACCESS_COARSE_LOCATION",
+        "RECORD_AUDIO"
+      ],
+      "config": {
+        "googleMaps": {
+          "apiKey": "AIzaSyCD5yBOOEmumJJS8Cge21Tw68UNFzjnUKo"
+        }
+      }
     },
     "web": {
       "output": "static",
@@ -38,7 +51,21 @@
             "backgroundColor": "#000000"
           }
         }
-      ]
+      ],
+      "expo-maps",
+      "expo-web-browser",
+      [
+        "@jamsch/expo-speech-recognition",
+        {
+          "microphonePermission": "Allow $travlate to access the microphone for voice recognition.",
+          "speechRecognitionPermission": "Allow $travlate to recognize and transcribe your speech.",
+          "androidSpeechServicePackages": [
+            "com.google.android.googlequicksearchbox"
+          ]
+        }
+      ],
+      "onnxruntime-react-native",
+      "expo-asset"
     ],
     "experiments": {
       "typedRoutes": true,

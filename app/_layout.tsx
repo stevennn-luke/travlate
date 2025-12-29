@@ -1,24 +1,49 @@
-import { DarkTheme, DefaultTheme, ThemeProvider } from '@react-navigation/native';
-import { Stack } from 'expo-router';
+import { Stack, useRouter } from 'expo-router';
 import { StatusBar } from 'expo-status-bar';
+import { useEffect } from 'react';
 import 'react-native-reanimated';
+import { AuthProvider, useAuth } from '../contexts/AuthContext';
 
-import { useColorScheme } from '@/hooks/use-color-scheme';
+function RootNavigator() {
+  const { user, loading } = useAuth();
+  const router = useRouter();
 
-export const unstable_settings = {
-  anchor: '(tabs)',
-};
+  useEffect(() => {
+    console.log('Auth state changed:', { user: !!user, loading });
+    if (!loading) {
+      if (user) {
+        console.log('User authenticated, navigating to home');
+        router.replace('/home');
+      } else {
+        console.log('No user, navigating to splash');
+        router.replace('/');
+      }
+    }
+  }, [user, loading]);
 
-export default function RootLayout() {
-  const colorScheme = useColorScheme();
+  if (loading) {
+    return null; // You can add a loading screen here
+  }
 
   return (
-    <ThemeProvider value={colorScheme === 'dark' ? DarkTheme : DefaultTheme}>
-      <Stack>
-        <Stack.Screen name="(tabs)" options={{ headerShown: false }} />
-        <Stack.Screen name="modal" options={{ presentation: 'modal', title: 'Modal' }} />
-      </Stack>
-      <StatusBar style="auto" />
-    </ThemeProvider>
+            <Stack>
+              <Stack.Screen name="index" options={{ headerShown: false }} />
+              <Stack.Screen name="signin" options={{ headerShown: false }} />
+              <Stack.Screen name="signup" options={{ headerShown: false }} />
+              <Stack.Screen name="home" options={{ headerShown: false }} />
+              <Stack.Screen name="text-conversion" options={{ headerShown: false }} />
+              <Stack.Screen name="voice-to-text" options={{ headerShown: false }} />
+              <Stack.Screen name="ocr-camera" options={{ headerShown: false }} />
+              <Stack.Screen name="map-screen" options={{ headerShown: false }} />
+            </Stack>
+  );
+}
+
+export default function RootLayout() {
+  return (
+    <AuthProvider>
+      <RootNavigator />
+      <StatusBar style="light" />
+    </AuthProvider>
   );
 }
