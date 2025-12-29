@@ -3,7 +3,7 @@ import { initializeApp } from 'firebase/app';
 import { getReactNativePersistence, initializeAuth } from 'firebase/auth';
 
 // Your web app's Firebase configuration
-const firebaseConfig = {
+export const firebaseConfig = {
   apiKey: "AIzaSyCD5yBOOEmumJJS8Cge21Tw68UNFzjnUKo",
   authDomain: "travlate-3bc0d.firebaseapp.com",
   projectId: "travlate-3bc0d",
@@ -20,5 +20,9 @@ const app = initializeApp(firebaseConfig);
 export const auth = initializeAuth(app, {
   persistence: getReactNativePersistence(ReactNativeAsyncStorage)
 });
+
+// Initialize Firestore
+import { getFirestore } from 'firebase/firestore';
+export const db = getFirestore(app);
 
 export default app;

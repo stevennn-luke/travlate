@@ -3,7 +3,8 @@ import { Image } from 'expo-image';
 import * as Location from 'expo-location';
 import { useRouter } from 'expo-router';
 import { useEffect, useState } from 'react';
-import { Alert, SafeAreaView, ScrollView, StyleSheet, Text, TouchableOpacity, View } from 'react-native';
+import { Alert, ScrollView, StyleSheet, Text, TouchableOpacity, View } from 'react-native';
+import { SafeAreaView } from 'react-native-safe-area-context';
 import { useAuth } from '../contexts/AuthContext';
 
 export default function HomeScreen() {
@@ -70,6 +71,9 @@ export default function HomeScreen() {
   const handleSpeechToText = () => {
     router.push('/voice-to-text');
   };
+  const handleProfilePress = () => {
+    router.push('/profile');
+  };
 
   return (
     <SafeAreaView style={styles.container}>
@@ -80,7 +84,7 @@ export default function HomeScreen() {
           style={styles.logo}
           contentFit="contain"
         />
-        <TouchableOpacity style={styles.profileButton} onPress={handleLogout}>
+        <TouchableOpacity style={styles.profileButton} onPress={handleProfilePress}>
           <Ionicons name="person-circle" size={32} color="#333" />
         </TouchableOpacity>
       </View>
@@ -168,7 +172,7 @@ export default function HomeScreen() {
 const styles = StyleSheet.create({
   container: {
     flex: 1,
-    backgroundColor: '#f8f9fa',
+    backgroundColor: '#ffffff',
   },
   header: {
     flexDirection: 'row',

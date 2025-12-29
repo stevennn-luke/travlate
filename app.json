@@ -12,9 +12,10 @@
       "supportsTablet": true,
       "infoPlist": {
         "NSLocationWhenInUseUsageDescription": "This app needs access to location to show your current position on the map.",
-        "NSSpeechRecognitionUsageDescription": "Allow $travlate to use speech recognition.",
-        "NSMicrophoneUsageDescription": "Allow $travlate to use the microphone."
-      }
+        "NSSpeechRecognitionUsageDescription": "Allow $travlate to recognize and transcribe your speech.",
+        "NSMicrophoneUsageDescription": "Allow $travlate to access the microphone for voice recognition."
+      },
+      "bundleIdentifier": "com.stevennnnnnn.travlate"
     },
     "android": {
       "adaptiveIcon": {
@@ -26,7 +27,8 @@
       "permissions": [
         "ACCESS_FINE_LOCATION",
         "ACCESS_COARSE_LOCATION",
-        "RECORD_AUDIO"
+        "RECORD_AUDIO",
+        "android.permission.RECORD_AUDIO"
       ],
       "config": {
         "googleMaps": {
@@ -36,7 +38,7 @@
     },
     "web": {
       "output": "static",
-      "favicon": "./assets/images/favicon.png"
+      "favicon": "./assets/images/icon.png"
     },
     "plugins": [
       "expo-router",
@@ -52,19 +54,15 @@
           }
         }
       ],
-      "expo-maps",
       "expo-web-browser",
       [
-        "@jamsch/expo-speech-recognition",
+        "expo-build-properties",
         {
-          "microphonePermission": "Allow $travlate to access the microphone for voice recognition.",
-          "speechRecognitionPermission": "Allow $travlate to recognize and transcribe your speech.",
-          "androidSpeechServicePackages": [
-            "com.google.android.googlequicksearchbox"
-          ]
+          "ios": {
+            "deploymentTarget": "15.1"
+          }
         }
       ],
-      "onnxruntime-react-native",
       "expo-asset"
     ],
     "experiments": {

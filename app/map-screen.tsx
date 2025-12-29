@@ -1,22 +1,24 @@
 import { Ionicons } from '@expo/vector-icons';
 import * as Location from 'expo-location';
 import { useRouter } from 'expo-router';
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import {
-    Alert,
-    Linking,
-    SafeAreaView,
-    StyleSheet,
-    Text,
-    TouchableOpacity,
-    View,
-    WebView
+  Alert,
+  StatusBar,
+  StyleSheet,
+  Text,
+  TextInput,
+  TouchableOpacity,
+  View
 } from 'react-native';
+import MapView, { Marker, PROVIDER_DEFAULT } from 'react-native-maps';
+import { SafeAreaView } from 'react-native-safe-area-context';
 
 export default function MapScreen() {
   const router = useRouter();
+  const mapRef = useRef<MapView>(null);
   const [location, setLocation] = useState<Location.LocationObject | null>(null);
-  const [address, setAddress] = useState<string>('Getting location...');
+  const [address, setAddress] = useState<string>('');
 
   useEffect(() => {
     getCurrentLocation();
@@ -30,13 +32,23 @@ export default function MapScreen() {
         return;
       }
 
-      let location = await Location.getCurrentPositionAsync({});
-      setLocation(location);
+      let loc = await Location.getCurrentPositionAsync({});
+      setLocation(loc);
+
+      // Smoothly animate and zoom to location
+      if (mapRef.current) {
+        mapRef.current.animateToRegion({
+          latitude: loc.coords.latitude,
+          longitude: loc.coords.longitude,
+          latitudeDelta: 0.005, // Zoomed in for detail
+          longitudeDelta: 0.005,
+        }, 1000);
+      }
 
       // Get address from coordinates
       let addressResponse = await Location.reverseGeocodeAsync({
-        latitude: location.coords.latitude,
-        longitude: location.coords.longitude,
+        latitude: loc.coords.latitude,
+        longitude: loc.coords.longitude,
       });
 
       if (addressResponse.length > 0) {
@@ -45,152 +57,208 @@ export default function MapScreen() {
       }
     } catch (error) {
       console.error('Error getting location:', error);
-      setAddress('Unable to get location');
     }
   };
 
-  const openGoogleMaps = () => {
-    if (location) {
-      const { latitude, longitude } = location.coords;
-      const url = `https://www.google.com/maps?q=${latitude},${longitude}`;
-      Linking.openURL(url);
-    }
-  };
-
-  const downloadLocation = () => {
-    if (location) {
-      Alert.alert(
-        'Download Location',
-        `Location: ${address}\nCoordinates: ${location.coords.latitude.toFixed(6)}, ${location.coords.longitude.toFixed(6)}`,
-        [
-          { text: 'Cancel', style: 'cancel' },
-          { 
-            text: 'Download', 
-            onPress: () => {
-              // Here you would implement actual download functionality
-              Alert.alert('Download', 'Location saved to downloads!');
-            }
-          }
-        ]
-      );
-    }
-  };
-
-  const getMapUrl = () => {
-    if (location) {
-      const { latitude, longitude } = location.coords;
-      return `https://www.google.com/maps/embed/v1/view?key=AIzaSyCD5yBOOEmumJJS8Cge21Tw68UNFzjnUKo&center=${latitude},${longitude}&zoom=15&maptype=roadmap`;
-    }
-    return `https://www.google.com/maps/embed/v1/view?key=AIzaSyCD5yBOOEmumJJS8Cge21Tw68UNFzjnUKo&center=0,0&zoom=2&maptype=roadmap`;
+  const getRegion = () => {
+    // We return a default implementation but rely on animateToRegion for updates
+    return {
+      latitude: 8.8932,
+      longitude: 76.5841,
+      latitudeDelta: 0.015,
+      longitudeDelta: 0.0121,
+    };
   };
 
   return (
-    <SafeAreaView style={styles.container}>
-      {/* Map */}
-      <View style={styles.mapContainer}>
-        <WebView
-          source={{ uri: getMapUrl() }}
-          style={styles.map}
-          javaScriptEnabled={true}
-          domStorageEnabled={true}
-          startInLoadingState={true}
-        />
-      </View>
+    <View style={styles.container}>
+      <StatusBar barStyle="light-content" backgroundColor="transparent" translucent />
 
-      {/* Location Info Overlay */}
-      <View style={styles.locationInfo}>
-        <View style={styles.locationCard}>
-          <View style={styles.locationHeader}>
-            <Ionicons name="location" size={20} color="#000" />
-            <Text style={styles.locationTitle}>Current Location</Text>
-            <TouchableOpacity style={styles.downloadButton} onPress={downloadLocation}>
-              <Ionicons name="download" size={20} color="#000" />
-            </TouchableOpacity>
+      {/* Full Screen Map */}
+      <MapView
+        ref={mapRef}
+        style={styles.map}
+        provider={PROVIDER_DEFAULT}
+        initialRegion={getRegion()}
+        showsUserLocation={true}
+        showsMyLocationButton={false} // We implement custom button below
+        mapType="hybrid" // Matches satellite/hybrid view in screenshot
+        toolbarEnabled={false}
+      >
+        {location && (
+          <Marker
+            coordinate={{
+              latitude: location.coords.latitude,
+              longitude: location.coords.longitude,
+            }}
+            title="My Location"
+            description={address}
+          >
+            <View style={styles.myLocationMarker}>
+              <View style={styles.myLocationDot} />
+              <View style={styles.myLocationHalo} />
+            </View>
+          </Marker>
+        )}
+      </MapView>
+
+      {/* Top Search Bar */}
+      <SafeAreaView style={styles.topContainer} edges={['top']}>
+        {/* Weather/Status Overlay */}
+        <View style={styles.weatherOverlay}>
+          <Ionicons name="partly-sunny" size={24} color="#fff" />
+          <View>
+            <Text style={styles.weatherTemp}>27°</Text>
           </View>
-          <Text style={styles.locationAddress}>{address}</Text>
-          {location && (
-            <Text style={styles.locationCoordinates}>
-              {location.coords.latitude.toFixed(6)}, {location.coords.longitude.toFixed(6)}
-            </Text>
-          )}
         </View>
-      </View>
+        <TouchableOpacity style={styles.backButton} onPress={() => router.back()}>
+          <Ionicons name="arrow-back" size={24} color="#fff" />
+        </TouchableOpacity>
+      </SafeAreaView>
 
-      {/* Back Button */}
-      <TouchableOpacity style={styles.backButton} onPress={() => router.back()}>
-        <Ionicons name="chevron-back" size={24} color="#000" />
-      </TouchableOpacity>
-    </SafeAreaView>
+      {/* Bottom Controls */}
+      <SafeAreaView style={styles.bottomContainer} edges={['bottom']}>
+
+        {/* Right Side Floating Buttons */}
+        <View style={styles.floatingButtons}>
+          <TouchableOpacity style={styles.fab} onPress={getCurrentLocation}>
+            <Ionicons name="navigate-outline" size={24} color="#fff" />
+          </TouchableOpacity>
+        </View>
+
+        {/* Search Bar */}
+        <View style={styles.searchBar}>
+          <Ionicons name="search" size={20} color="#fff" style={styles.searchIcon} />
+          <TextInput
+            style={styles.searchInput}
+            placeholder="Apple Maps"
+            placeholderTextColor="#ccc"
+            value="Search Maps"
+            editable={false}
+          />
+          <TouchableOpacity style={styles.micButton}>
+            <Ionicons name="mic" size={20} color="#fff" />
+          </TouchableOpacity>
+        </View>
+      </SafeAreaView>
+    </View>
   );
 }
 
 const styles = StyleSheet.create({
   container: {
     flex: 1,
-    backgroundColor: 'white',
-  },
-  mapContainer: {
-    flex: 1,
+    backgroundColor: '#000',
   },
   map: {
-    flex: 1,
+    ...StyleSheet.absoluteFillObject,
+  },
+  topContainer: {
+    position: 'absolute',
+    top: 0,
+    left: 0,
+    right: 0,
+    paddingHorizontal: 20,
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'flex-start',
+    zIndex: 10,
+    paddingTop: 16
   },
   backButton: {
-    position: 'absolute',
-    top: 50,
-    left: 20,
-    backgroundColor: 'white',
-    borderRadius: 20,
     width: 40,
     height: 40,
+    borderRadius: 20,
+    backgroundColor: 'rgba(0,0,0,0.3)',
     justifyContent: 'center',
     alignItems: 'center',
-    shadowColor: '#000',
-    shadowOffset: { width: 0, height: 2 },
-    shadowOpacity: 0.25,
-    shadowRadius: 4,
-    elevation: 5,
-    zIndex: 1,
   },
-  locationInfo: {
-    position: 'absolute',
-    bottom: 20,
-    left: 20,
-    right: 20,
-  },
-  locationCard: {
-    backgroundColor: 'white',
-    borderRadius: 12,
-    padding: 16,
-    shadowColor: '#000',
-    shadowOffset: { width: 0, height: 2 },
-    shadowOpacity: 0.25,
-    shadowRadius: 4,
-    elevation: 5,
-  },
-  locationHeader: {
+  weatherOverlay: {
     flexDirection: 'row',
     alignItems: 'center',
-    justifyContent: 'space-between',
-    marginBottom: 8,
+    gap: 8,
+    backgroundColor: 'rgba(0,0,0,0.3)', // Semi-transparent black
+    padding: 8,
+    borderRadius: 12,
   },
-  locationTitle: {
+  weatherTemp: {
+    color: '#fff',
+    fontSize: 18,
+    fontWeight: 'bold',
+  },
+  bottomContainer: {
+    position: 'absolute',
+    bottom: 20,
+    left: 0,
+    right: 0,
+    paddingHorizontal: 16,
+    zIndex: 10,
+  },
+  floatingButtons: {
+    position: 'absolute',
+    right: 16,
+    bottom: 100, // Above search bar
+    alignItems: 'center',
+    gap: 12,
+  },
+  fab: {
+    width: 50,
+    height: 50,
+    borderRadius: 25,
+    backgroundColor: 'rgba(30,30,30,0.85)', // Dark gray translucent
+    justifyContent: 'center',
+    alignItems: 'center',
+    borderWidth: 1,
+    borderColor: 'rgba(255,255,255,0.1)',
+  },
+  fabText: {
+    color: '#fff',
+    fontWeight: 'bold',
     fontSize: 16,
-    fontWeight: '600',
-    color: '#000',
-    marginLeft: 8,
+  },
+  searchBar: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: '#2c2c2e', // Dark gray card
+    borderRadius: 30,
+    padding: 6,
+    height: 60,
+  },
+  searchIcon: {
+    marginLeft: 16,
+    marginRight: 8,
+  },
+  searchInput: {
     flex: 1,
+    color: '#fff',
+    fontSize: 18,
+    height: '100%',
   },
-  downloadButton: {
-    padding: 4,
+  micButton: {
+    padding: 10,
+    marginRight: 8,
   },
-  locationAddress: {
-    fontSize: 14,
-    color: '#666',
-    marginBottom: 4,
+  // Custom Marker
+  myLocationMarker: {
+    width: 24,
+    height: 24,
+    justifyContent: 'center',
+    alignItems: 'center',
   },
-  locationCoordinates: {
-    fontSize: 12,
-    color: '#999',
+  myLocationDot: {
+    width: 16,
+    height: 16,
+    borderRadius: 8,
+    backgroundColor: '#007AFF',
+    zIndex: 2,
+    borderWidth: 2,
+    borderColor: 'white',
   },
+  myLocationHalo: {
+    position: 'absolute',
+    width: 40, // large halo
+    height: 40,
+    borderRadius: 20,
+    backgroundColor: 'rgba(0,122,255,0.3)', // Light blue transparent
+  }
 });

@@ -1,14 +1,20 @@
 import * as AuthSession from 'expo-auth-session';
 import * as Crypto from 'expo-crypto';
 import {
-    GoogleAuthProvider,
-    User,
-    createUserWithEmailAndPassword,
-    onAuthStateChanged,
-    signInWithCredential,
-    signInWithEmailAndPassword,
-    signOut,
-    updateProfile
+  ApplicationVerifier,
+  ConfirmationResult,
+  createUserWithEmailAndPassword,
+  EmailAuthProvider,
+  GoogleAuthProvider,
+  linkWithCredential,
+  linkWithPhoneNumber,
+  onAuthStateChanged,
+  signInWithCredential,
+  signInWithEmailAndPassword,
+  signInWithPhoneNumber,
+  signOut,
+  updateProfile,
+  User
 } from 'firebase/auth';
 import React, { createContext, useContext, useEffect, useState } from 'react';
 import { auth } from '../firebase.config';
@@ -19,7 +25,10 @@ interface AuthContextType {
   signIn: (email: string, password: string) => Promise<void>;
   signUp: (email: string, password: string, name: string) => Promise<void>;
   signInWithGoogle: () => Promise<void>;
+  signInWithPhone: (phoneNumber: string, appVerifier: ApplicationVerifier) => Promise<ConfirmationResult>;
   logout: () => Promise<void>;
+  linkEmail: (email: string, password: string) => Promise<void>;
+  linkPhone: (phoneNumber: string, appVerifier: ApplicationVerifier) => Promise<ConfirmationResult>;
 }
 
 const AuthContext = createContext<AuthContextType | undefined>(undefined);
@@ -74,14 +83,15 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
   const signInWithGoogle = async () => {
     try {
       console.log('Attempting Google sign in');
-      
+
       // Create a random string for state parameter
-      const state = await Crypto.getRandomBytesAsync(16).then(bytes => 
+      const state = await Crypto.getRandomBytesAsync(16).then(bytes =>
         bytes.reduce((str, byte) => str + byte.toString(16).padStart(2, '0'), '')
       );
-      
+
       // Configure the OAuth request
-      const redirectUri = AuthSession.makeRedirectUri({ useProxy: true });
+      // Configure the OAuth request
+      const redirectUri = AuthSession.makeRedirectUri();
       const request = new AuthSession.AuthRequest({
         clientId: '536935018297-your_web_client_id.apps.googleusercontent.com', // You'll need to get this from Firebase Console
         scopes: ['openid', 'profile', 'email'],
@@ -89,43 +99,53 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
         responseType: AuthSession.ResponseType.Code,
         state,
         extraParams: {},
-        additionalParameters: {},
         prompt: AuthSession.Prompt.SelectAccount,
       });
-      
+
       // Start the authentication flow
       const result = await request.promptAsync({
         authorizationEndpoint: 'https://accounts.google.com/o/oauth2/v2/auth',
       });
-      
+
       if (result.type === 'success') {
         // Exchange the authorization code for an access token
         const tokenResponse = await AuthSession.exchangeCodeAsync(
           {
             clientId: '536935018297-your_web_client_id.apps.googleusercontent.com',
-            code: result.params.code,
+            code: result.params.code || '',
             redirectUri,
             extraParams: {
-              code_verifier: request.codeChallenge,
+              code_verifier: request.codeChallenge || '',
             },
           },
           {
             tokenEndpoint: 'https://oauth2.googleapis.com/token',
           }
         );
-        
+
         // Create a Google credential with the access token
         const credential = GoogleAuthProvider.credential(tokenResponse.idToken);
-        
+
         // Sign in with the credential
         const authResult = await signInWithCredential(auth, credential);
-        
+
         console.log('Google sign in successful:', authResult.user.email);
       } else {
         throw new Error('Google sign-in was cancelled or failed');
       }
     } catch (error) {
       console.error('Google sign in error:', error);
+      throw error;
+    }
+  };
+
+  const signInWithPhone = async (phoneNumber: string, appVerifier: ApplicationVerifier) => {
+    try {
+      console.log('Attempting phone sign in with:', phoneNumber);
+      const confirmationResult = await signInWithPhoneNumber(auth, phoneNumber, appVerifier);
+      return confirmationResult;
+    } catch (error) {
+      console.error('Phone sign in error:', error);
       throw error;
     }
   };
@@ -144,7 +164,17 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     signIn,
     signUp,
     signInWithGoogle,
-    logout
+    signInWithPhone,
+    logout,
+    linkEmail: async (email: string, password: string) => {
+      if (!auth.currentUser) throw new Error('No user logged in');
+      const credential = EmailAuthProvider.credential(email, password);
+      await linkWithCredential(auth.currentUser, credential);
+    },
+    linkPhone: async (phoneNumber: string, appVerifier: ApplicationVerifier) => {
+      if (!auth.currentUser) throw new Error('No user logged in');
+      return await linkWithPhoneNumber(auth.currentUser, phoneNumber, appVerifier);
+    }
   };
 
   return (
