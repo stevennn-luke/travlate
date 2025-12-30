@@ -25,7 +25,7 @@ interface AuthContextType {
   signIn: (email: string, password: string) => Promise<void>;
   signUp: (email: string, password: string, name: string) => Promise<void>;
   signInWithGoogle: () => Promise<void>;
-  signInWithPhone: (phoneNumber: string, appVerifier: ApplicationVerifier) => Promise<ConfirmationResult>;
+  signInWithPhone: (phoneNumber: string, appVerifier?: ApplicationVerifier) => Promise<ConfirmationResult>;
   logout: () => Promise<void>;
   linkEmail: (email: string, password: string) => Promise<void>;
   linkPhone: (phoneNumber: string, appVerifier: ApplicationVerifier) => Promise<ConfirmationResult>;
@@ -139,9 +139,12 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     }
   };
 
-  const signInWithPhone = async (phoneNumber: string, appVerifier: ApplicationVerifier) => {
+  const signInWithPhone = async (phoneNumber: string, appVerifier?: ApplicationVerifier) => {
     try {
       console.log('Attempting phone sign in with:', phoneNumber);
+      if (!appVerifier) {
+        throw new Error('Phone authentication requires reCAPTCHA verification');
+      }
       const confirmationResult = await signInWithPhoneNumber(auth, phoneNumber, appVerifier);
       return confirmationResult;
     } catch (error) {

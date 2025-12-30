@@ -36,6 +36,20 @@ export interface UserProfile {
     updatedAt: string;
 }
 
+export interface Route {
+    id: number;
+    name: string;
+    startLat: number;
+    startLng: number;
+    endLat: number;
+    endLng: number;
+    polyline: string; // JSON string of coordinates
+    steps: string; // JSON string of navigation steps
+    distance: string;
+    duration: string;
+    timestamp: string;
+}
+
 export const initDatabase = () => {
     try {
         db.execSync(`
@@ -74,6 +88,21 @@ export const initDatabase = () => {
         voiceAssistantEnabled INTEGER DEFAULT 1,
         appLockEnabled INTEGER DEFAULT 0,
         updatedAt TEXT
+      );
+    `);
+        db.execSync(`
+      CREATE TABLE IF NOT EXISTS saved_routes (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        name TEXT NOT NULL,
+        startLat REAL NOT NULL,
+        startLng REAL NOT NULL,
+        endLat REAL NOT NULL,
+        endLng REAL NOT NULL,
+        polyline TEXT NOT NULL,
+        steps TEXT NOT NULL,
+        distance TEXT NOT NULL,
+        duration TEXT NOT NULL,
+        timestamp TEXT NOT NULL
       );
     `);
         console.log('Database initialized');
@@ -221,12 +250,55 @@ export const getLocalUserProfile = (userId: string): UserProfile | null => {
     }
 };
 
+export const saveRoute = (route: Omit<Route, 'id'>) => {
+    try {
+        db.runSync(
+            `INSERT INTO saved_routes (name, startLat, startLng, endLat, endLng, polyline, steps, distance, duration, timestamp) 
+             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+            route.name,
+            route.startLat,
+            route.startLng,
+            route.endLat,
+            route.endLng,
+            route.polyline,
+            route.steps,
+            route.distance,
+            route.duration,
+            route.timestamp
+        );
+        console.log('Route saved locally');
+    } catch (error) {
+        console.error('Failed to save route:', error);
+        throw error;
+    }
+};
+
+export const getSavedRoutes = (): Route[] => {
+    try {
+        const result = db.getAllSync<Route>('SELECT * FROM saved_routes ORDER BY timestamp DESC');
+        return result;
+    } catch (error) {
+        console.error('Failed to get saved routes:', error);
+        return [];
+    }
+};
+
+export const deleteRoute = (id: number) => {
+    try {
+        db.runSync('DELETE FROM saved_routes WHERE id = ?', id);
+    } catch (error) {
+        console.error('Failed to delete route:', error);
+        throw error;
+    }
+};
+
 export const clearLocalDatabase = () => {
     try {
         db.execSync('DELETE FROM ocr_scans');
         db.execSync('DELETE FROM translations');
         db.execSync('DELETE FROM voice_notes');
         db.execSync('DELETE FROM user_profiles');
+        db.execSync('DELETE FROM saved_routes');
         console.log('Local database cleared');
     } catch (error) {
         console.error('Failed to clear local database:', error);

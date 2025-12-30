@@ -51,13 +51,13 @@ export default function SplashScreen() {
   return (
     <View style={styles.container}>
       <Image
-        source={require('@/assets/images/splash-bg.jpg')}
+        source={require('../assets/images/splash-bg.jpg')}
         style={styles.backgroundImage}
         contentFit="cover"
       />
       <Animated.View style={[styles.logoContainer, { opacity: logoFadeAnim }]}>
         <Image
-          source={require('@/assets/images/logo.png')}
+          source={require('../assets/images/logo.png')}
           style={styles.logo}
           contentFit="contain"
         />

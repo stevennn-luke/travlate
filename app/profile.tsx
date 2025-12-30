@@ -1,5 +1,4 @@
 import { Ionicons } from '@expo/vector-icons';
-import { FirebaseRecaptchaVerifierModal } from 'expo-firebase-recaptcha';
 import { Stack, useRouter } from 'expo-router';
 // linkWithCredential is used inside AuthContext but we import types/functions for local logic if needed
 import {
@@ -12,7 +11,7 @@ import { useEffect, useRef, useState } from 'react';
 import { ActivityIndicator, Alert, Modal, ScrollView, StatusBar, StyleSheet, Switch, Text, TextInput, TouchableOpacity, View } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { useAuth } from '../contexts/AuthContext';
-import { auth, db, firebaseConfig } from '../firebase.config';
+import { auth, db } from '../firebase.config';
 import { clearLocalDatabase, getLocalUserProfile, initDatabase, saveLocalUserProfile } from './services/DatabaseService';
 
 export default function ProfileScreen() {
@@ -267,10 +266,6 @@ export default function ProfileScreen() {
         <SafeAreaView style={styles.container} edges={['top']}>
             <Stack.Screen options={{ headerShown: false }} />
             <StatusBar barStyle="dark-content" backgroundColor="#ffffff" />
-            <FirebaseRecaptchaVerifierModal
-                ref={recaptchaVerifier}
-                firebaseConfig={firebaseConfig}
-            />
 
             <ScrollView style={styles.content} contentContainerStyle={styles.contentContainer}>
                 {/* Home Back Button */}
@@ -496,7 +491,7 @@ export default function ProfileScreen() {
 const styles = StyleSheet.create({
     container: {
         flex: 1,
-        backgroundColor: '#ffffff',
+        backgroundColor: '#EDF1F3',
     },
     content: {
         flex: 1,

@@ -1,5 +1,4 @@
 import { Ionicons } from '@expo/vector-icons';
-import { FirebaseRecaptchaVerifierModal } from 'expo-firebase-recaptcha';
 import { Image } from 'expo-image';
 import { useRouter } from 'expo-router';
 import { ConfirmationResult, RecaptchaVerifier } from 'firebase/auth';
@@ -21,7 +20,7 @@ import {
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { useAuth } from '../contexts/AuthContext';
-import { auth, firebaseConfig } from '../firebase.config';
+import { auth } from '../firebase.config';
 
 declare global {
   interface Window {
@@ -47,7 +46,6 @@ export default function SignUpScreen() {
   const [showCountryPicker, setShowCountryPicker] = useState(false);
   const [verificationCode, setVerificationCode] = useState('');
   const [confirmResult, setConfirmResult] = useState<ConfirmationResult | null>(null);
-  const recaptchaVerifier = useRef<FirebaseRecaptchaVerifierModal>(null);
 
   // Animation Refs
   const fadeAnim = useRef(new Animated.Value(0)).current;
@@ -95,7 +93,7 @@ export default function SignUpScreen() {
       setLoading(true);
       await signUp(email, password, name);
       // Logic for navigation is typically handled by auth state listener or:
-      router.replace('/home');
+      router.replace('/(tabs)');
     } catch (error: any) {
       console.error('Sign up error:', error);
       Alert.alert('Error', error.message);
@@ -109,7 +107,7 @@ export default function SignUpScreen() {
       setLoading(true);
       await signInWithGoogle();
       // Logic for navigation is typically handled by auth state listener
-      router.replace('/home');
+      router.replace('/(tabs)');
     } catch (error: any) {
       console.error('Google sign up error:', error);
       Alert.alert('Error', error.message);
@@ -149,11 +147,8 @@ export default function SignUpScreen() {
         const confirmation = await signInWithPhone(fullPhoneNumber, window.recaptchaVerifier);
         setConfirmResult(confirmation);
       } else {
-        if (!recaptchaVerifier.current) {
-          Alert.alert('Error', 'Recaptcha not initialized');
-          return;
-        }
-        const confirmation = await signInWithPhone(fullPhoneNumber, recaptchaVerifier.current);
+        // Native Phone Auth - @react-native-firebase handles recaptcha automatically
+        const confirmation = await signInWithPhone(fullPhoneNumber);
         setConfirmResult(confirmation);
       }
     } catch (error: any) {
@@ -174,7 +169,7 @@ export default function SignUpScreen() {
       setLoading(true);
       await confirmResult.confirm(verificationCode);
       // Ideally, update user profile with 'name' here
-      router.replace('/home');
+      router.replace('/(tabs)');
     } catch (error: any) {
       console.error('Verify code error:', error);
       Alert.alert('Error', error.message || 'Invalid verification code.');
@@ -475,13 +470,7 @@ export default function SignUpScreen() {
         </TouchableWithoutFeedback>
       </KeyboardAvoidingView>
 
-      <View style={styles.recaptchaContainer}>
-        <FirebaseRecaptchaVerifierModal
-          ref={recaptchaVerifier}
-          firebaseConfig={firebaseConfig}
-          attemptInvisibleVerification={true}
-        />
-      </View>
+
     </SafeAreaView>
   );
 }
@@ -489,7 +478,7 @@ export default function SignUpScreen() {
 const styles = StyleSheet.create({
   container: {
     flex: 1,
-    backgroundColor: '#ffffff',
+    backgroundColor: '#EDF1F3',
   },
   keyboardView: {
     flex: 1,

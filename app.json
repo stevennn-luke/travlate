@@ -27,14 +27,14 @@
       "permissions": [
         "ACCESS_FINE_LOCATION",
         "ACCESS_COARSE_LOCATION",
-        "RECORD_AUDIO",
-        "android.permission.RECORD_AUDIO"
+        "RECORD_AUDIO"
       ],
       "config": {
         "googleMaps": {
           "apiKey": "AIzaSyCD5yBOOEmumJJS8Cge21Tw68UNFzjnUKo"
         }
-      }
+      },
+      "package": "com.stevennnnnnn.travlate"
     },
     "web": {
       "output": "static",
@@ -63,7 +63,14 @@
           }
         }
       ],
-      "expo-asset"
+      "expo-asset",
+      [
+        "@jamsch/expo-speech-recognition",
+        {
+          "microphonePermission": "Allow Travlate to access the microphone.",
+          "speechRecognitionPermission": "Allow Travlate to recognize and transcribe your speech."
+        }
+      ]
     ],
     "experiments": {
       "typedRoutes": true,

@@ -1,5 +1,5 @@
 import { Ionicons } from '@expo/vector-icons';
-import { FirebaseRecaptchaVerifierModal } from 'expo-firebase-recaptcha';
+
 import { Image } from 'expo-image';
 import { useRouter } from 'expo-router';
 import { ConfirmationResult, RecaptchaVerifier, sendPasswordResetEmail } from 'firebase/auth';
@@ -7,7 +7,7 @@ import { useEffect, useRef, useState } from 'react';
 import { Alert, Animated, Keyboard, KeyboardAvoidingView, Platform, ScrollView, StatusBar, StyleSheet, Text, TextInput, TouchableOpacity, TouchableWithoutFeedback, View } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { useAuth } from '../contexts/AuthContext';
-import { auth, firebaseConfig } from '../firebase.config';
+import { auth } from '../firebase.config';
 
 declare global {
   interface Window {
@@ -53,7 +53,7 @@ export default function SignInScreen() {
   const [showCountryPicker, setShowCountryPicker] = useState(false);
   const [verificationCode, setVerificationCode] = useState('');
   const [confirmResult, setConfirmResult] = useState<ConfirmationResult | null>(null);
-  const recaptchaVerifier = useRef<FirebaseRecaptchaVerifierModal>(null);
+
 
 
   const countryCodes = [
@@ -76,7 +76,7 @@ export default function SignInScreen() {
     try {
       setLoading(true);
       await signIn(email, password);
-      router.replace('/home');
+      router.replace('/(tabs)');
     } catch (error: any) {
       console.error('Sign in error:', error);
       Alert.alert('Error', error.message || 'Failed to sign in. Please check your credentials.');
@@ -90,7 +90,7 @@ export default function SignInScreen() {
       setLoading(true);
       await signInWithGoogle();
       // Navigate to home screen after signin
-      router.replace('/home');
+      router.replace('/(tabs)');
     } catch (error: any) {
       console.error('Google sign in error:', error);
       Alert.alert('Error', error.message || 'Google Sign In not available yet. Please use email/password.');
@@ -150,12 +150,8 @@ export default function SignInScreen() {
         const confirmation = await signInWithPhone(fullPhoneNumber, window.recaptchaVerifier);
         setConfirmResult(confirmation);
       } else {
-        // Native Phone Auth
-        if (!recaptchaVerifier.current) {
-          Alert.alert('Error', 'Recaptcha not initialized');
-          return;
-        }
-        const confirmation = await signInWithPhone(fullPhoneNumber, recaptchaVerifier.current);
+        // Native Phone Auth - @react-native-firebase handles recaptcha automatically
+        const confirmation = await signInWithPhone(fullPhoneNumber);
         setConfirmResult(confirmation);
       }
     } catch (error: any) {
@@ -186,7 +182,7 @@ export default function SignInScreen() {
     try {
       setLoading(true);
       await confirmResult.confirm(verificationCode);
-      router.replace('/home');
+      router.replace('/(tabs)');
     } catch (error: any) {
       console.error('Verify code error:', error);
       Alert.alert('Error', error.message || 'Invalid verification code.');
@@ -495,13 +491,7 @@ export default function SignInScreen() {
         </TouchableWithoutFeedback>
       </KeyboardAvoidingView>
 
-      <View style={styles.recaptchaContainer}>
-        <FirebaseRecaptchaVerifierModal
-          ref={recaptchaVerifier}
-          firebaseConfig={firebaseConfig}
-          attemptInvisibleVerification={true}
-        />
-      </View>
+
     </SafeAreaView>
   );
 }
@@ -509,7 +499,7 @@ export default function SignInScreen() {
 const styles = StyleSheet.create({
   container: {
     flex: 1,
-    backgroundColor: '#ffffff',
+    backgroundColor: '#EDF1F3',
   },
   keyboardView: {
     flex: 1,
