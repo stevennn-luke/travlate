@@ -21,7 +21,6 @@ import { SafeOCR, SafeTranslate, TranslateLanguage } from '../utils/SafeTranslat
 
 const { width, height } = Dimensions.get('window');
 
-// Dimensions for the fixed highlight box
 const CROP_BOX_WIDTH = width * 0.8;
 const CROP_BOX_HEIGHT = 200;
 
@@ -51,13 +50,13 @@ export default function CameraScreen() {
     // Data State
     const [extractedText, setExtractedText] = useState('');
     const [translatedText, setTranslatedText] = useState('');
-    const [targetLanguage, setTargetLanguage] = useState(languages[1]); // Spanish Default
+    const [targetLanguage, setTargetLanguage] = useState(languages[1]);
     const [isLangPickerVisible, setIsLangPickerVisible] = useState(false);
     const [isProcessing, setIsProcessing] = useState(false);
 
     // ScrollView Ref & State for Crop
     const [scrollOffset, setScrollOffset] = useState({ x: 0, y: 0 });
-    const [contentSize, setContentSize] = useState({ width: width, height: height }); // Default to screen
+    const [contentSize, setContentSize] = useState({ width: width, height: height });
     const [zoomScale, setZoomScale] = useState(1);
 
     if (!permission) return <View />;
@@ -92,7 +91,6 @@ export default function CameraScreen() {
         setCapturedImage(uri);
         setImgDimensions({ w, h });
         setStep('crop');
-        // Reset crop state
         setZoomScale(1);
         setScrollOffset({ x: 0, y: 0 });
     };
@@ -100,10 +98,7 @@ export default function CameraScreen() {
     const onCropScroll = (event: any) => {
         setScrollOffset(event.nativeEvent.contentOffset);
         setContentSize(event.nativeEvent.contentSize);
-        // Estimate zoom scale from content width (assuming standard vertical scrol view keeps Aspect Ratio)
-        // Image rendered width is contentSize.width
-        // But we need to know the 'base' rendered width (at zoom 1).
-        // For simplicity, we calculate scale based on the Base Display Width.
+
     };
 
     const processCropAndScan = async () => {
@@ -111,66 +106,29 @@ export default function CameraScreen() {
         setIsProcessing(true);
 
         try {
-            // CROP LOGIC
-            // 1. Determine Displayed Image Dimensions at Zoom 1
             const screenRatio = width / height;
             const imgRatio = imgDimensions.w / imgDimensions.h;
 
             let displayW, displayH;
 
-            // We use 'contain' logic for the base image
             if (imgRatio > screenRatio) {
-                // Wide image: Fits Width
                 displayW = width;
                 displayH = width / imgRatio;
             } else {
-                // Tall image: Fits Height
                 displayH = height;
                 displayW = height * imgRatio;
             }
 
-            // 2. Current Zoom Scale
-            // contentSize.width is the current width of the image in the scrollview
-            // Zoom Scale = contentSize.width / displayW
             const currentScale = contentSize.width / displayW;
 
-            // 3. View Window Coords (Where the Highlight Box is on Screen)
-            // It is centered.
             const boxX = (width - CROP_BOX_WIDTH) / 2;
             const boxY = (height - CROP_BOX_HEIGHT) / 2;
-
-            // 4. Map to Image relative coords
-            // The Image is shifted by scrollOffset AND potentially centered content offset (if looped, but here simple).
-            // Actually, RN ScrollView content starts at (0,0) usually unless centered styling.
-            // Our ContentContainerStyle has 'center'.
-
-            // Let's assume content starts at (0,0) of scrollable area.
-            // ScrollOffset is how much we scrolled INTO the content.
-            // Coords in Content: ScrollOffset + BoxPosition
-
-            // Wait: If content is Smaller than screen (Zoom 1, fit-contain), it is centered by Flexbox.
-            // OffsetX = (Width - DisplayW)/2. 
-            // This makes math hard because ScrollOffset might be 0 but image starts at x=50.
-
-            // SIMPLIFIED APPROACH: Rely on ImageManipulator processing.
-            // We calculate factor.
-
-            // Calculate Crop Rect in "Content Space" (Zoomed pixels)
-            // We need to account for the "centering" spacing if zoomed out.
-            // BUT minimal zoom is 1. If Zoom 1, contentSize ~= displaySize.
-
-            // Let's rely on standard logic:
-            // Top-Left of Box relative to Content = (scrollOffset.x + boxX) - (ContentPaddingX)
-            // If we assume Content fills ScrollView (Zoom >= 1), Padding is 0.
 
             const cropX_Zoomed = scrollOffset.x + boxX;
             const cropY_Zoomed = scrollOffset.y + boxY;
 
-            // Normalize to Original Image Scale
-            // Factor = OriginalWidth / (DisplayW * Scale)
             const scaleFactor = imgDimensions.w / contentSize.width;
 
-            // Add Safety Margin (e.g. 20px) to capture edges better
             const margin = 20;
 
             let finalX = (cropX_Zoomed - margin) * scaleFactor;
@@ -178,20 +136,17 @@ export default function CameraScreen() {
             let finalW = (CROP_BOX_WIDTH + (margin * 2)) * scaleFactor;
             let finalH = (CROP_BOX_HEIGHT + (margin * 2)) * scaleFactor;
 
-            // Clamp
             if (finalX < 0) finalX = 0;
             if (finalY < 0) finalY = 0;
             if (finalX + finalW > imgDimensions.w) finalW = imgDimensions.w - finalX;
             if (finalY + finalH > imgDimensions.h) finalH = imgDimensions.h - finalY;
 
-            // Perform Crop
             const cropResult = await ImageManipulator.manipulateAsync(
                 capturedImage,
                 [{ crop: { originX: finalX, originY: finalY, width: finalW, height: finalH } }],
                 { compress: 1, format: ImageManipulator.SaveFormat.JPEG }
             );
 
-            // 5. OCR & Translate
             const text = await SafeOCR(cropResult.uri);
             setExtractedText(text);
             await triggerKeyTranslation(text, targetLanguage.mlCode);
@@ -211,10 +166,6 @@ export default function CameraScreen() {
             return;
         }
         try {
-            // Basic Lang Detection or Assume English Source?
-            // User requested "detected language option". SafeTranslate handles source auto? 
-            // ML Kit Translate usually needs Source. Let's assume English or implement detection later.
-            // For now defaults to English -> Target.
             const trans = await SafeTranslate({
                 text: text,
                 sourceLanguage: TranslateLanguage.ENGLISH,
@@ -229,7 +180,6 @@ export default function CameraScreen() {
         setTargetLanguage(lang);
         setIsLangPickerVisible(false);
         if (extractedText) {
-            // Re-translate
             setIsProcessing(true);
             triggerKeyTranslation(extractedText, lang.mlCode).then(() => setIsProcessing(false));
         }
@@ -299,7 +249,6 @@ export default function CameraScreen() {
                     {/* Fixed Overlay */}
                     <View style={styles.cropOverlay} pointerEvents="none">
                         <View style={styles.dimBg} />
-                        {/* We can't do a perfect hole easily, so we just dim everything lightly and put a bright box */}
                         <View style={styles.highlightBox}>
                             <View style={[styles.corner, styles.topLeft]} />
                             <View style={[styles.corner, styles.topRight]} />
@@ -431,7 +380,7 @@ const styles = StyleSheet.create({
         flexDirection: 'row',
         justifyContent: 'space-between',
         paddingHorizontal: 30,
-        paddingBottom: 90, // Increased to avoid nav bar overlap
+        paddingBottom: 90,
         alignItems: 'center',
         backgroundColor: 'rgba(0,0,0,0.8)',
         paddingTop: 20,
@@ -449,7 +398,7 @@ const styles = StyleSheet.create({
     cardTitle: { fontSize: 20, fontWeight: '700', color: '#111' },
 
     targetRow: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', marginTop: 15, marginBottom: 8 },
-    label: { fontSize: 12, fontWeight: '700', color: '#999', marginBottom: 4, textTransform: 'uppercase' }, // Added
+    label: { fontSize: 12, fontWeight: '700', color: '#999', marginBottom: 4, textTransform: 'uppercase' },
     langPill: { flexDirection: 'row', alignItems: 'center', backgroundColor: '#F5F5F7', paddingHorizontal: 12, paddingVertical: 8, borderRadius: 16, gap: 6 },
     langPillText: { fontSize: 13, fontWeight: '700', color: '#555' },
 
