@@ -41,43 +41,35 @@ export const SafeTranslate = async (options: {
     targetLanguage: any;
     downloadModelIfNeeded?: boolean;
 }): Promise<string> => {
-    if (isMLKitAvailable) {
-        try {
-            const result = await TranslateText.translate(options);
-            return typeof result === 'string' ? result : (result as any).text || '';
-        } catch (e) {
-            console.warn('ML Kit Translate failed, trying fallback:', e);
+    try {
+        // Attempt Text Translation via usage. 
+        // If native module is missing, it will throw, catching below.
+        const result = await TranslateText.translate(options);
+        return typeof result === 'string' ? result : (result as any).text || '';
+    } catch (e: any) {
+        console.warn('ML Kit Translate failed, trying fallback:', e);
+
+        // Check if error is specifically about module missing
+        if (e.message?.includes('download') || e.code === 'E_DOWNLOAD_FAILED') {
+            // Return specific error for download
+            return "Offline Model Missing. Please Connect to Internet.";
         }
     }
 
-    // In Expo Go or if native fails, use the web fallback
+    // In Expo Go or if native fails hard, use the web fallback
     return translateWebFallback(options.text, options.sourceLanguage, options.targetLanguage);
 };
 
 export const SafeOCR = async (imageUri: string): Promise<string> => {
-    if (isOCRAvailable) {
-        try {
-            const result = await TextRecognition.recognize(imageUri);
-            return result.text;
-        } catch (e) {
-            console.error('OCR failed:', e);
-            throw e;
-        }
-    } else {
-        console.log('ML Kit OCR not linked. Using enhanced simulation fallback.');
-
-        // Simulate real scanning for a better demo experience
-        return new Promise((resolve) => {
-            const scenarios = [
-                "RESTAURANT MENU\nSalad: $12.00\nBurger: $15.50\nCoffee: $3.50",
-                "TRAIN STATION\nNext Departure: 14:30\nPlatform 4 - Madrid Express",
-                "MUSEUM ENTRANCE\nOpening Hours: 09:00 - 18:00\nAdults: 15€ | Seniors: 10€",
-                "DIRECTIONS\nPlaza Mayor -> 500m\nPuerta del Sol -> 1.2km"
-            ];
-            const randomScenario = scenarios[Math.floor(Math.random() * scenarios.length)];
-
-            setTimeout(() => resolve(randomScenario), 1500);
-        });
+    try {
+        // Attempt to use native OCR directly. 
+        // If the module is not linked properly, this might throw or return undefined.
+        const result = await TextRecognition.recognize(imageUri);
+        return result.text;
+    } catch (e) {
+        console.warn('Native OCR failed or not available:', e);
+        // Return empty string or specific error text instead of random scenarios
+        return "";
     }
 };
 

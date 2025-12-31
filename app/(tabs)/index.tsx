@@ -238,10 +238,7 @@ export default function TranslateScreen() {
                                         <Text style={styles.languageText}>{sourceLanguage.name}</Text>
                                         <Ionicons name="chevron-down" size={16} color="#666" />
                                     </TouchableOpacity>
-                                    <View style={styles.offlineBadge}>
-                                        <Ionicons name="cloud-offline-outline" size={12} color="#999" />
-                                        <Text style={styles.offlineLabel}>Offline</Text>
-                                    </View>
+
                                 </View>
 
                                 <View style={styles.inputWrapper}>

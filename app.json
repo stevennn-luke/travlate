@@ -7,7 +7,7 @@
     "icon": "./assets/images/icon.png",
     "scheme": "travlate",
     "userInterfaceStyle": "automatic",
-    "newArchEnabled": true,
+    "newArchEnabled": false,
     "ios": {
       "supportsTablet": true,
       "infoPlist": {
@@ -70,7 +70,8 @@
           "microphonePermission": "Allow Travlate to access the microphone.",
           "speechRecognitionPermission": "Allow Travlate to recognize and transcribe your speech."
         }
-      ]
+      ],
+      "./plugins/withMLKit"
     ],
     "experiments": {
       "typedRoutes": true,
