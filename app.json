@@ -72,8 +72,7 @@
           "microphonePermission": "Allow Travlate to access the microphone.",
           "speechRecognitionPermission": "Allow Travlate to recognize and transcribe your speech."
         }
-      ],
-      "./plugins/withMLKit"
+      ]
     ],
     "experiments": {
       "typedRoutes": true,
