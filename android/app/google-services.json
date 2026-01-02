@@ -1,0 +1,39 @@
+{
+  "project_info": {
+    "project_number": "536935018297",
+    "project_id": "travlate-3bc0d",
+    "storage_bucket": "travlate-3bc0d.firebasestorage.app"
+  },
+  "client": [
+    {
+      "client_info": {
+        "mobilesdk_app_id": "1:536935018297:android:3747864843fb505a9882e8",
+        "android_client_info": {
+          "package_name": "com.stevennnnnnn.travlate"
+        }
+      },
+      "oauth_client": [
+        {
+          "client_id": "536935018297-9faeqvs5seq88e8312m0k3ba40t5f884.apps.googleusercontent.com",
+          "client_type": 3
+        }
+      ],
+      "api_key": [
+        {
+          "current_key": "AIzaSyBSOWWaRxRiYMhJp44GDQie_Wp29FFbbi8"
+        }
+      ],
+      "services": {
+        "appinvite_service": {
+          "other_platform_oauth_client": [
+            {
+              "client_id": "536935018297-9faeqvs5seq88e8312m0k3ba40t5f884.apps.googleusercontent.com",
+              "client_type": 3
+            }
+          ]
+        }
+      }
+    }
+  ],
+  "configuration_version": "1"
+}
