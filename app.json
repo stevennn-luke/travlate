@@ -35,8 +35,7 @@
           "apiKey": "AIzaSyCD5yBOOEmumJJS8Cge21Tw68UNFzjnUKo"
         }
       },
-      "package": "com.stevennnnnnn.travlate",
-      "googleServicesFile": "./google-services.json"
+      "package": "com.stevennnnnnn.travlate"
     },
     "web": {
       "output": "static",
