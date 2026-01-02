@@ -12,8 +12,8 @@
       "supportsTablet": true,
       "infoPlist": {
         "NSLocationWhenInUseUsageDescription": "This app needs access to location to show your current position on the map.",
-        "NSSpeechRecognitionUsageDescription": "Allow $travlate to recognize and transcribe your speech.",
-        "NSMicrophoneUsageDescription": "Allow $travlate to access the microphone for voice recognition."
+        "NSSpeechRecognitionUsageDescription": "Allow Travlate to recognize and transcribe your speech.",
+        "NSMicrophoneUsageDescription": "Allow Travlate to access the microphone."
       },
       "bundleIdentifier": "com.stevennnnnnn.travlate"
     },
@@ -27,14 +27,16 @@
       "permissions": [
         "ACCESS_FINE_LOCATION",
         "ACCESS_COARSE_LOCATION",
-        "RECORD_AUDIO"
+        "RECORD_AUDIO",
+        "android.permission.RECORD_AUDIO"
       ],
       "config": {
         "googleMaps": {
           "apiKey": "AIzaSyCD5yBOOEmumJJS8Cge21Tw68UNFzjnUKo"
         }
       },
-      "package": "com.stevennnnnnn.travlate"
+      "package": "com.stevennnnnnn.travlate",
+      "googleServicesFile": "./google-services.json"
     },
     "web": {
       "output": "static",
@@ -76,6 +78,12 @@
     "experiments": {
       "typedRoutes": true,
       "reactCompiler": true
+    },
+    "extra": {
+      "router": {},
+      "eas": {
+        "projectId": "f76d67d5-88b0-4b8e-ad17-8a452edb0ddb"
+      }
     }
   }
 }
