@@ -41,3 +41,6 @@ app-example
 # generated native folders
 /ios
 /android
+
+# Exception: allow google-services.json for EAS Build
+!/android/app/google-services.json

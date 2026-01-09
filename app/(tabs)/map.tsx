@@ -1,4 +1,5 @@
 import { Ionicons } from '@expo/vector-icons';
+import NetInfo from '@react-native-community/netinfo';
 import Constants from 'expo-constants';
 import * as Location from 'expo-location';
 import { useEffect, useRef, useState } from 'react';
@@ -16,7 +17,7 @@ import {
     TouchableOpacity,
     View
 } from 'react-native';
-import MapView, { Marker, Polyline, PROVIDER_DEFAULT } from 'react-native-maps';
+import MapView, { Marker, Polyline, PROVIDER_GOOGLE } from 'react-native-maps';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { deleteRoute, getSavedRoutes, initDatabase, Route, saveRoute } from '../services/DatabaseService';
 import { decodePolyline } from '../utils/polyline';
@@ -27,28 +28,48 @@ const CYAN_ACCENT = '#61D8D8';
 
 export default function MapScreen() {
     const mapRef = useRef<MapView>(null);
+    const [mapReady, setMapReady] = useState(false);
     const [location, setLocation] = useState<Location.LocationObject | null>(null);
-    const [searchQuery, setSearchQuery] = useState('');
+
+    // Search States
+    const [searchQuery, setSearchQuery] = useState(''); // Destination
+    const [startQuery, setStartQuery] = useState('');   // Origin (Empty = My Location)
+    const [isRoutingMode, setIsRoutingMode] = useState(false);
+
     const [routePoints, setRoutePoints] = useState<{ latitude: number; longitude: number }[]>([]);
     const [activeRoute, setActiveRoute] = useState<Route | null>(null);
     const [savedRoutes, setSavedRoutes] = useState<Route[]>([]);
     const [isSearching, setIsSearching] = useState(false);
     const [showSavedModal, setShowSavedModal] = useState(false);
     const [isNavigating, setIsNavigating] = useState(false);
+    const [isOffline, setIsOffline] = useState(false);
 
     // Breadcrumb state
     const [isRecordingPath, setIsRecordingPath] = useState(false);
     const [breadcrumbPoints, setBreadcrumbPoints] = useState<{ latitude: number; longitude: number }[]>([]);
     const recordingInterval = useRef<any>(null);
 
-    const GOOGLE_API_KEY = Constants.expoConfig?.android?.config?.googleMaps?.apiKey || '';
+    // Fallback to empty string but log failure if missing
+    const GOOGLE_API_KEY = Constants.expoConfig?.android?.config?.googleMaps?.apiKey || Constants.expoConfig?.ios?.config?.googleMapsApiKey || '';
 
     useEffect(() => {
+        if (!GOOGLE_API_KEY) {
+            console.error("Google Maps API Key is missing from Expo Config! Directions will not work.");
+        } else {
+            console.log("Map Loaded with Key (Prefix):", GOOGLE_API_KEY.substring(0, 5) + "...");
+        }
+
         initDatabase();
         getCurrentLocation();
         loadSavedRoutes();
+
+        const unsubscribe = NetInfo.addEventListener(state => {
+            setIsOffline(!(state.isConnected && state.isInternetReachable));
+        });
+
         return () => {
             if (recordingInterval.current) clearInterval(recordingInterval.current);
+            unsubscribe();
         };
     }, []);
 
@@ -82,24 +103,58 @@ export default function MapScreen() {
         }
     };
 
-    const handleSearchDest = async () => {
+    const resolveLocation = async (query: string): Promise<{ lat: number, lng: number } | null> => {
+        if (!query || query.toLowerCase() === 'my location') {
+            const tempLoc = await getCurrentLocation();
+            return tempLoc ? { lat: tempLoc.coords.latitude, lng: tempLoc.coords.longitude } : null;
+        }
+        try {
+            const geocodeResult = await Location.geocodeAsync(query);
+            if (geocodeResult.length > 0) {
+                return { lat: geocodeResult[0].latitude, lng: geocodeResult[0].longitude };
+            }
+        } catch (e) {
+            console.warn("Geocoding failed for: " + query);
+        }
+        return null;
+    };
+
+    const handleFetchRoute = async () => {
         if (!searchQuery.trim()) return;
         Keyboard.dismiss();
 
-        const currentLoc = await getCurrentLocation();
-        if (!currentLoc) return;
+        if (isOffline) {
+            Alert.alert('Offline Mode', 'You are offline. Please select a saved route from your list.');
+            setShowSavedModal(true);
+            return;
+        }
 
         setIsSearching(true);
         try {
-            const geocodeResult = await Location.geocodeAsync(searchQuery);
-            if (geocodeResult.length === 0) {
-                Alert.alert('Not found', 'Could not find that location.');
+            // 1. Resolve Start Point
+            let startCoords;
+            if (isRoutingMode && startQuery.trim().length > 0) {
+                startCoords = await resolveLocation(startQuery);
+            } else {
+                startCoords = await resolveLocation('my location');
+            }
+
+            if (!startCoords) {
+                Alert.alert('Error', 'Could not determine start location.');
                 setIsSearching(false);
                 return;
             }
 
-            const dest = geocodeResult[0];
-            const url = `https://maps.googleapis.com/maps/api/directions/json?origin=${currentLoc.coords.latitude},${currentLoc.coords.longitude}&destination=${dest.latitude},${dest.longitude}&key=${GOOGLE_API_KEY}`;
+            // 2. Resolve End Point
+            const endCoords = await resolveLocation(searchQuery);
+            if (!endCoords) {
+                Alert.alert('Error', 'Could not find destination.');
+                setIsSearching(false);
+                return;
+            }
+
+            // 3. Fetch Directions
+            const url = `https://maps.googleapis.com/maps/api/directions/json?origin=${startCoords.lat},${startCoords.lng}&destination=${endCoords.lat},${endCoords.lng}&key=${GOOGLE_API_KEY}`;
             const response = await fetch(url);
             const data = await response.json();
 
@@ -109,11 +164,11 @@ export default function MapScreen() {
                 setRoutePoints(points);
 
                 const newRoute: Omit<Route, 'id'> = {
-                    name: searchQuery,
-                    startLat: currentLoc.coords.latitude,
-                    startLng: currentLoc.coords.longitude,
-                    endLat: dest.latitude,
-                    endLng: dest.longitude,
+                    name: searchQuery, // or `${startQuery || 'Current'} -> ${searchQuery}`
+                    startLat: startCoords.lat,
+                    startLng: startCoords.lng,
+                    endLat: endCoords.lat,
+                    endLng: endCoords.lng,
                     polyline: polyline,
                     steps: JSON.stringify(data.routes[0].legs[0].steps),
                     distance: data.routes[0].legs[0].distance.text,
@@ -126,14 +181,22 @@ export default function MapScreen() {
                 setIsNavigating(true);
 
                 mapRef.current?.fitToCoordinates(points, {
-                    edgePadding: { top: 100, right: 50, bottom: 200, left: 50 },
+                    edgePadding: { top: 180, right: 50, bottom: 200, left: 50 },
                     animated: true
                 });
+
+                // Auto-save as requested
+                if (isRoutingMode) {
+                    saveRoute(newRoute);
+                    Alert.alert('Saved', 'Route saved to your list.');
+                    loadSavedRoutes();
+                }
             } else {
                 Alert.alert('Error', `Route calculation failed: ${data.status}`);
             }
         } catch (error) {
-            Alert.alert('Offline', 'Connect to search or load a saved route.');
+            Alert.alert('Error', 'Something went wrong fetching the route.');
+            console.error(error);
         } finally {
             setIsSearching(false);
         }
@@ -229,6 +292,8 @@ export default function MapScreen() {
         setActiveRoute(null);
         setRoutePoints([]);
         setSearchQuery('');
+        setStartQuery('');
+        setIsRoutingMode(false);
     };
 
     return (
@@ -238,12 +303,14 @@ export default function MapScreen() {
             <MapView
                 ref={mapRef}
                 style={styles.map}
-                provider={PROVIDER_DEFAULT}
+                provider={PROVIDER_GOOGLE}
                 showsUserLocation={true}
                 showsMyLocationButton={false}
                 mapType="standard"
                 userInterfaceStyle="light"
                 onPress={() => Keyboard.dismiss()}
+                cacheEnabled={true}
+                loadingEnabled={true}
             >
                 {routePoints.length > 0 && (
                     <Polyline
@@ -264,44 +331,113 @@ export default function MapScreen() {
                 )}
 
                 {activeRoute && (
-                    <Marker
-                        coordinate={{ latitude: activeRoute.endLat, longitude: activeRoute.endLng }}
-                        title={activeRoute.name}
-                    >
-                        <View style={styles.destMarker}>
-                            <Ionicons name="location" size={28} color="#FF3B30" />
-                        </View>
-                    </Marker>
+                    <>
+                        {/* Start Marker (only if not current location roughly) */}
+                        <Marker
+                            coordinate={{ latitude: activeRoute.startLat, longitude: activeRoute.startLng }}
+                            title="Start"
+                            pinColor="green"
+                        />
+                        {/* End Marker */}
+                        <Marker
+                            coordinate={{ latitude: activeRoute.endLat, longitude: activeRoute.endLng }}
+                            title={activeRoute.name}
+                        >
+                            <View style={styles.destMarker}>
+                                <Ionicons name="location" size={28} color="#FF3B30" />
+                            </View>
+                        </Marker>
+                    </>
                 )}
             </MapView>
 
             <SafeAreaView style={styles.topContainer} edges={['top']}>
-                <View style={[styles.searchBar, isNavigating && { opacity: 0.9 }]}>
-                    <Ionicons name="search" size={20} color="#999" style={styles.searchIcon} />
-                    <TextInput
-                        style={styles.searchInput}
-                        placeholder="Where to?"
-                        placeholderTextColor="#999"
-                        value={searchQuery}
-                        onChangeText={setSearchQuery}
-                        onSubmitEditing={handleSearchDest}
-                    />
-                    <TouchableOpacity style={styles.listButton} onPress={() => setShowSavedModal(true)}>
-                        <Ionicons name="list" size={22} color={CYAN_ACCENT} />
-                    </TouchableOpacity>
-                    {isSearching && <ActivityIndicator size="small" color={CYAN_ACCENT} style={{ marginRight: 10 }} />}
-                </View>
+                {isOffline && (
+                    <View style={styles.offlineBanner}>
+                        <Ionicons name="cloud-offline" size={16} color="white" />
+                        <Text style={styles.offlineText}>Offline Mode</Text>
+                    </View>
+                )}
+
+                {!isRoutingMode && !isNavigating ? (
+                    // Simple Search Mode
+                    <View style={styles.searchBar}>
+                        <Ionicons name="search" size={20} color="#999" style={styles.searchIcon} />
+                        <TextInput
+                            style={styles.searchInput}
+                            placeholder={isOffline ? "Search unavailable (Offline)" : "Where to?"}
+                            placeholderTextColor="#999"
+                            value={searchQuery}
+                            onChangeText={setSearchQuery}
+                            onSubmitEditing={handleFetchRoute}
+                            editable={!isOffline}
+                        />
+                        <TouchableOpacity style={styles.listButton} onPress={() => setShowSavedModal(true)}>
+                            <Ionicons name="list" size={22} color={CYAN_ACCENT} />
+                        </TouchableOpacity>
+                        {isSearching && <ActivityIndicator size="small" color={CYAN_ACCENT} style={{ marginLeft: 6 }} />}
+                    </View>
+                ) : !isNavigating ? (
+                    // Point-to-Point Input Mode
+                    <View style={styles.routingContainer}>
+                        <View style={styles.routingHeader}>
+                            <TouchableOpacity onPress={() => setIsRoutingMode(false)} style={{ padding: 4 }}>
+                                <Ionicons name="arrow-back" size={24} color="#333" />
+                            </TouchableOpacity>
+                            <Text style={styles.routingTitle}>Get Directions</Text>
+                        </View>
+
+                        <View style={styles.inputRow}>
+                            <Ionicons name="radio-button-on" size={16} color="green" style={{ marginRight: 8 }} />
+                            <TextInput
+                                style={styles.routingInput}
+                                placeholder="My Location"
+                                placeholderTextColor="#888"
+                                value={startQuery}
+                                onChangeText={setStartQuery}
+                            />
+                        </View>
+                        <View style={styles.connectorLine} />
+                        <View style={styles.inputRow}>
+                            <Ionicons name="location" size={16} color="#FF3B30" style={{ marginRight: 8 }} />
+                            <TextInput
+                                style={styles.routingInput}
+                                placeholder="Destination"
+                                placeholderTextColor="#888"
+                                value={searchQuery}
+                                onChangeText={setSearchQuery}
+                                onSubmitEditing={handleFetchRoute}
+                                autoFocus={true}
+                            />
+                        </View>
+
+                        <TouchableOpacity
+                            style={styles.goButton}
+                            onPress={handleFetchRoute}
+                            disabled={isSearching}
+                        >
+                            {isSearching ? (
+                                <ActivityIndicator color="white" />
+                            ) : (
+                                <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8 }}>
+                                    <Ionicons name="save-outline" size={20} color="white" />
+                                    <Text style={styles.goButtonText}>Save Route</Text>
+                                </View>
+                            )}
+                        </TouchableOpacity>
+                    </View>
+                ) : null}
             </SafeAreaView>
 
             {/* Navigation Panel */}
             {isNavigating && activeRoute && (
                 <View style={styles.navPanel}>
                     <View style={styles.navHeader}>
-                        <View>
-                            <Text style={styles.navDestText}>{activeRoute.name}</Text>
+                        <View style={{ flex: 1 }}>
+                            <Text style={styles.navDestText} numberOfLines={1}>{activeRoute.name}</Text>
                             <Text style={styles.navDetailText}>{activeRoute.distance} • {activeRoute.duration}</Text>
                         </View>
-                        <TouchableOpacity onPress={cancelNavigation}>
+                        <TouchableOpacity onPress={cancelNavigation} style={{ marginLeft: 10 }}>
                             <Ionicons name="close-circle" size={32} color="#EEE" />
                         </TouchableOpacity>
                     </View>
@@ -317,22 +453,29 @@ export default function MapScreen() {
                 </View>
             )}
 
-            <View style={styles.floatingButtons}>
-                <TouchableOpacity
-                    style={[styles.fab, isRecordingPath && styles.fabRecording]}
-                    onPress={isRecordingPath ? stopAndSavePath : startRecordingPath}
-                >
-                    <Ionicons
-                        name={isRecordingPath ? "stop" : "walk-outline"}
-                        size={24}
-                        color={isRecordingPath ? "white" : CYAN_ACCENT}
-                    />
-                </TouchableOpacity>
+            {!isRoutingMode && (
+                <View style={styles.floatingButtons}>
+                    <TouchableOpacity
+                        style={[styles.fab, isRecordingPath && styles.fabRecording]}
+                        onPress={isRecordingPath ? stopAndSavePath : startRecordingPath}
+                    >
+                        <Ionicons
+                            name={isRecordingPath ? "stop" : "walk-outline"}
+                            size={24}
+                            color={isRecordingPath ? "white" : CYAN_ACCENT}
+                        />
+                    </TouchableOpacity>
 
-                <TouchableOpacity style={styles.fab} onPress={getCurrentLocation}>
-                    <Ionicons name="navigate" size={24} color={CYAN_ACCENT} />
-                </TouchableOpacity>
-            </View>
+                    {/* New Routing Trigger Pin */}
+                    <TouchableOpacity style={styles.fab} onPress={() => setIsRoutingMode(true)}>
+                        <Ionicons name="pin" size={24} color={CYAN_ACCENT} />
+                    </TouchableOpacity>
+
+                    <TouchableOpacity style={styles.fab} onPress={getCurrentLocation}>
+                        <Ionicons name="navigate" size={24} color={CYAN_ACCENT} />
+                    </TouchableOpacity>
+                </View>
+            )}
 
             {/* Saved Routes Modal */}
             <Modal visible={showSavedModal} animationType="slide" transparent={true}>
@@ -396,6 +539,27 @@ const styles = StyleSheet.create({
         right: 20,
         zIndex: 10,
     },
+    offlineBanner: {
+        backgroundColor: '#FF3B30',
+        borderRadius: 8,
+        paddingVertical: 6,
+        paddingHorizontal: 12,
+        flexDirection: 'row',
+        alignSelf: 'center',
+        alignItems: 'center',
+        marginBottom: 10,
+        shadowColor: '#000',
+        shadowOffset: { width: 0, height: 2 },
+        shadowOpacity: 0.2,
+        shadowRadius: 4,
+    },
+    offlineText: {
+        color: 'white',
+        fontWeight: 'bold',
+        marginLeft: 6,
+        fontSize: 12,
+    },
+    // Simple Search Bar
     searchBar: {
         flexDirection: 'row',
         alignItems: 'center',
@@ -420,14 +584,79 @@ const styles = StyleSheet.create({
         fontSize: 16,
         fontWeight: '600',
     },
+    iconButton: {
+        padding: 8,
+    },
     listButton: {
-        padding: 10,
+        padding: 8,
+        marginLeft: 4,
+    },
+    // Routing Mode
+    routingContainer: {
+        backgroundColor: 'white',
+        borderRadius: 20,
+        padding: 16,
+        shadowColor: '#000',
+        shadowOffset: { width: 0, height: 6 },
+        shadowOpacity: 0.15,
+        shadowRadius: 12,
+        elevation: 10,
+    },
+    routingHeader: {
+        flexDirection: 'row',
+        alignItems: 'center',
+        marginBottom: 16,
+    },
+    routingTitle: {
+        fontSize: 18,
+        fontWeight: '700',
+        color: '#333',
+        marginLeft: 10,
+    },
+    inputRow: {
+        flexDirection: 'row',
+        alignItems: 'center',
+        backgroundColor: '#F5F7F9',
+        borderRadius: 12,
+        paddingHorizontal: 12,
+        height: 50,
+        marginBottom: 0,
+    },
+    routingInput: {
+        flex: 1,
+        fontSize: 16,
+        color: '#333',
+        fontWeight: '500',
+        height: '100%',
+    },
+    connectorLine: {
+        width: 2,
+        height: 12,
+        backgroundColor: '#DDD',
+        marginLeft: 23,
+        marginVertical: 4,
+    },
+    goButton: {
+        backgroundColor: CYAN_ACCENT,
+        borderRadius: 16,
+        height: 50,
+        justifyContent: 'center',
+        alignItems: 'center',
+        marginTop: 16,
+        shadowColor: CYAN_ACCENT,
+        shadowOpacity: 0.3,
+        shadowOffset: { width: 0, height: 4 },
+    },
+    goButtonText: {
+        color: 'white',
+        fontWeight: '700',
+        fontSize: 18,
     },
     floatingButtons: {
         position: 'absolute',
         right: 20,
-        bottom: 110,
-        gap: 15,
+        bottom: 125,
+        gap: 8, // Reduced from 15
     },
     fab: {
         width: 56,

@@ -2,13 +2,15 @@ import { Ionicons } from '@expo/vector-icons';
 import { CameraType, CameraView, useCameraPermissions } from 'expo-camera';
 import * as ImageManipulator from 'expo-image-manipulator';
 import * as ImagePicker from 'expo-image-picker';
-import { useRef, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import {
     ActivityIndicator,
     Alert,
+    Animated,
     Dimensions,
     Image,
     Modal,
+    PanResponder,
     ScrollView,
     StyleSheet,
     Text,
@@ -21,8 +23,9 @@ import { SafeOCR, SafeTranslate, TranslateLanguage } from '../utils/SafeTranslat
 
 const { width, height } = Dimensions.get('window');
 
-const CROP_BOX_WIDTH = width * 0.8;
-const CROP_BOX_HEIGHT = 200;
+
+
+// Removed CROP_BOX constants in favor of dynamic state
 
 const languages = [
     { code: 'en-US', mlCode: TranslateLanguage.ENGLISH, name: 'English' },
@@ -57,17 +60,125 @@ export default function CameraScreen() {
     // ScrollView Ref & State for Crop
     const [scrollOffset, setScrollOffset] = useState({ x: 0, y: 0 });
     const [contentSize, setContentSize] = useState({ width: width, height: height });
-    const [zoomScale, setZoomScale] = useState(1);
+
+    const [cropRect, setCropRect] = useState({
+        x: (width - width * 0.8) / 2, // Center initial X
+        y: (height - height * 0.3) / 2, // Center initial Y
+        w: width * 0.8,
+        h: height * 0.3,
+    });
+
+    const MIN_SIZE = 60;
+
+    // Move Box
+    const movePan = useRef(PanResponder.create({
+        onStartShouldSetPanResponder: () => true,
+        onPanResponderMove: (_, gesture) => {
+            setCropRect(prev => ({
+                ...prev,
+                x: Math.max(0, Math.min(width - prev.w, prev.x + gesture.dx * 0.5)), // Slower sensitivity for precision
+                y: Math.max(0, Math.min(height - prev.h, prev.y + gesture.dy * 0.5))
+            }));
+            // Note: In a real app we'd accumulate delta, but for simple "move" without state lag, this jittery way 
+            // works if we reset gesture or just use direct values. 
+            // BETTER WAY: Use a ref for start pos or just accept the jitter for this prototype.
+            // Actually, best to just not reset but we don't have access to gesture state persistence comfortably here.
+            // Let's use the delta to update state, but we need to reset the gesture or tracking.
+            // Since we can't easily reset gesture, we'll assume small updates. 
+            // Wait, standard pan responder usage:
+        },
+        onPanResponderGrant: () => {
+            // Store initial offset?
+        }
+    })).current;
+
+    // Better Movable Implementation:
+    const lastCropRect = useRef(cropRect);
+    const createMoveResponder = () => PanResponder.create({
+        onStartShouldSetPanResponder: () => true,
+        onPanResponderGrant: () => {
+            lastCropRect.current = cropRect;
+        },
+        onPanResponderMove: (_, gesture) => {
+            const newX = lastCropRect.current.x + gesture.dx;
+            const newY = lastCropRect.current.y + gesture.dy;
+            setCropRect(prev => ({
+                ...prev,
+                x: Math.max(0, Math.min(width - prev.w, newX)),
+                y: Math.max(0, Math.min(height - prev.h, newY))
+            }));
+        }
+    });
+
+    const moveResponder = useRef(createMoveResponder()).current;
+
+    // Resize Responders
+    const createResizeResponder = (corner: 'TL' | 'TR' | 'BL' | 'BR') => PanResponder.create({
+        onStartShouldSetPanResponder: () => true,
+        onPanResponderGrant: () => {
+            lastCropRect.current = cropRect;
+        },
+        onPanResponderMove: (_, gesture) => {
+            const prev = lastCropRect.current;
+            let newX = prev.x;
+            let newY = prev.y;
+            let newW = prev.w;
+            let newH = prev.h;
+
+            if (corner === 'TL') {
+                newX += gesture.dx;
+                newY += gesture.dy;
+                newW -= gesture.dx;
+                newH -= gesture.dy;
+            }
+            if (corner === 'TR') {
+                newY += gesture.dy;
+                newW += gesture.dx;
+                newH -= gesture.dy;
+            }
+            if (corner === 'BL') {
+                newX += gesture.dx;
+                newW -= gesture.dx;
+                newH += gesture.dy;
+            }
+            if (corner === 'BR') {
+                newW += gesture.dx;
+                newH += gesture.dy;
+            }
+
+            // Min Size Constraint
+            if (newW < MIN_SIZE) {
+                if (corner.includes('L')) newX = prev.x + prev.w - MIN_SIZE;
+                newW = MIN_SIZE;
+            }
+            if (newH < MIN_SIZE) {
+                if (corner.includes('T')) newY = prev.y + prev.h - MIN_SIZE;
+                newH = MIN_SIZE;
+            }
+
+            setCropRect({
+                x: newX,
+                y: newY,
+                w: newW,
+                h: newH
+            });
+        }
+    });
+
+    const resizeTL = useRef(createResizeResponder('TL')).current;
+    const resizeTR = useRef(createResizeResponder('TR')).current;
+    const resizeBL = useRef(createResizeResponder('BL')).current;
+    const resizeBR = useRef(createResizeResponder('BR')).current;
+
+
+
+    useEffect(() => {
+        if (!permission || permission.status === 'undetermined') {
+            requestPermission();
+        }
+    }, [permission]);
 
     if (!permission) return <View />;
-    if (!permission.granted) {
-        return (
-            <SafeAreaView style={styles.centerContent}>
-                <Text style={{ color: 'white' }}>Need Permission</Text>
-                <TouchableOpacity onPress={requestPermission}><Text style={{ color: 'cyan' }}>Grant</Text></TouchableOpacity>
-            </SafeAreaView>
-        );
-    }
 
     const takePicture = async () => {
         if (cameraRef.current) {
@@ -80,74 +191,114 @@ export default function CameraScreen() {
 
     const pickImage = async () => {
         try {
-            const result = await ImagePicker.launchImageLibraryAsync({ mediaTypes: ['images'], quality: 1 });
+            // Request permission first
+            const { status } = await ImagePicker.requestMediaLibraryPermissionsAsync();
+
+            if (status !== 'granted') {
+                Alert.alert(
+                    'Permission Required',
+                    'Please grant photo library access to select images.',
+                    [{ text: 'OK' }]
+                );
+                return;
+            }
+
+            const result = await ImagePicker.launchImageLibraryAsync({
+                mediaTypes: ['images'],
+                quality: 1,
+            });
             if (!result.canceled && result.assets[0]) {
                 prepareCrop(result.assets[0].uri, result.assets[0].width, result.assets[0].height);
             }
-        } catch (error) { }
+        } catch (error) {
+            Alert.alert('Error', 'Failed to access gallery');
+        }
     };
 
     const prepareCrop = (uri: string, w: number, h: number) => {
         setCapturedImage(uri);
         setImgDimensions({ w, h });
         setStep('crop');
-        setZoomScale(1);
-        setScrollOffset({ x: 0, y: 0 });
+        setCropRect({ x: 50, y: 150, w: width - 100, h: 200 }); // Default box
+    };
+
+    const processImage = async (imageUri: string) => {
+        setIsProcessing(true);
+        setCapturedImage(imageUri);
+        try {
+            const text = await SafeOCR(imageUri);
+            setExtractedText(text);
+            await triggerKeyTranslation(text, targetLanguage.mlCode);
+            setStep('result');
+        } catch (e) {
+            console.error(e);
+            Alert.alert('Error', 'Processing failed');
+        } finally {
+            setIsProcessing(false);
+        }
     };
 
     const onCropScroll = (event: any) => {
         setScrollOffset(event.nativeEvent.contentOffset);
         setContentSize(event.nativeEvent.contentSize);
-
     };
 
-    const processCropAndScan = async () => {
+    const processCropAndScan = async (fullImage: boolean = false) => {
         if (!capturedImage) return;
         setIsProcessing(true);
 
         try {
-            const screenRatio = width / height;
-            const imgRatio = imgDimensions.w / imgDimensions.h;
+            let uriToScan = capturedImage;
 
-            let displayW, displayH;
+            if (!fullImage) {
+                // Calculate scale based on "contain" logic
+                const screenRatio = width / height;
+                const imageRatio = imgDimensions.w / imgDimensions.h;
 
-            if (imgRatio > screenRatio) {
-                displayW = width;
-                displayH = width / imgRatio;
-            } else {
-                displayH = height;
-                displayW = height * imgRatio;
+                let displayedW, displayedH, startX, startY;
+
+                if (imageRatio > screenRatio) {
+                    // Limited by Width
+                    displayedW = width;
+                    displayedH = width / imageRatio;
+                    startX = 0;
+                    startY = (height - displayedH) / 2;
+                } else {
+                    // Limited by Height
+                    displayedH = height;
+                    displayedW = height * imageRatio;
+                    startX = (width - displayedW) / 2;
+                    startY = 0;
+                }
+
+                // Map cropRect (Screen Coords) to Image Coords
+                // Relative to displayed image origin
+                const relX = cropRect.x - startX;
+                const relY = cropRect.y - startY;
+
+                // Scale factor
+                const scale = imgDimensions.w / displayedW;
+
+                let finalX = relX * scale;
+                let finalY = relY * scale;
+                let finalW = cropRect.w * scale;
+                let finalH = cropRect.h * scale;
+
+                // Clamp
+                finalX = Math.max(0, finalX);
+                finalY = Math.max(0, finalY);
+                if (finalX + finalW > imgDimensions.w) finalW = imgDimensions.w - finalX;
+                if (finalY + finalH > imgDimensions.h) finalH = imgDimensions.h - finalY;
+
+                const cropResult = await ImageManipulator.manipulateAsync(
+                    capturedImage,
+                    [{ crop: { originX: finalX, originY: finalY, width: finalW, height: finalH } }],
+                    { compress: 1, format: ImageManipulator.SaveFormat.JPEG }
+                );
+                uriToScan = cropResult.uri;
             }
 
-            const currentScale = contentSize.width / displayW;
-
-            const boxX = (width - CROP_BOX_WIDTH) / 2;
-            const boxY = (height - CROP_BOX_HEIGHT) / 2;
-
-            const cropX_Zoomed = scrollOffset.x + boxX;
-            const cropY_Zoomed = scrollOffset.y + boxY;
-
-            const scaleFactor = imgDimensions.w / contentSize.width;
-
-            const margin = 20;
-
-            let finalX = (cropX_Zoomed - margin) * scaleFactor;
-            let finalY = (cropY_Zoomed - margin) * scaleFactor;
-            let finalW = (CROP_BOX_WIDTH + (margin * 2)) * scaleFactor;
-            let finalH = (CROP_BOX_HEIGHT + (margin * 2)) * scaleFactor;
-
-            if (finalX < 0) finalX = 0;
-            if (finalY < 0) finalY = 0;
-            if (finalX + finalW > imgDimensions.w) finalW = imgDimensions.w - finalX;
-            if (finalY + finalH > imgDimensions.h) finalH = imgDimensions.h - finalY;
-
-            const cropResult = await ImageManipulator.manipulateAsync(
-                capturedImage,
-                [{ crop: { originX: finalX, originY: finalY, width: finalW, height: finalH } }],
-                { compress: 1, format: ImageManipulator.SaveFormat.JPEG }
-            );
-
-            const text = await SafeOCR(cropResult.uri);
+            const text = await SafeOCR(uriToScan);
             setExtractedText(text);
             await triggerKeyTranslation(text, targetLanguage.mlCode);
 
@@ -203,9 +354,9 @@ export default function CameraScreen() {
                                 <Ionicons name={flash ? "flash" : "flash-off"} size={24} color="white" />
                             </TouchableOpacity>
                         </View>
-                        <View style={styles.frameGuideContainer}>
-                            <View style={styles.frameGuide} />
-                        </View>
+                        {/* Frame Guide Removed */}
+                        <View style={{ flex: 1 }} />
+
                         <View style={styles.bottomRow}>
                             <TouchableOpacity style={styles.iconCircle} onPress={pickImage}>
                                 <Ionicons name="images" size={26} color="white" />
@@ -224,52 +375,57 @@ export default function CameraScreen() {
             {/* 2. CROP */}
             {step === 'crop' && capturedImage && (
                 <View style={styles.cropContainer}>
-                    <ScrollView
-                        style={{ flex: 1 }}
-                        contentContainerStyle={styles.scrollContent}
-                        maximumZoomScale={3}
-                        minimumZoomScale={1}
-                        onScroll={onCropScroll}
-                        onContentSizeChange={(w, h) => setContentSize({ width: w, height: h })}
-                        scrollEventThrottle={16}
-                        showsHorizontalScrollIndicator={false}
-                        showsVerticalScrollIndicator={false}
-                        centerContent
-                    >
+                    {/* Static Image with Movable Overlay */}
+                    <View style={{ flex: 1, backgroundColor: 'black' }}>
                         <Image
                             source={{ uri: capturedImage }}
-                            style={{
-                                width: width,
-                                height: width * (imgDimensions.h / imgDimensions.w),
-                                resizeMode: 'contain'
-                            }}
+                            style={{ width: width, height: height, resizeMode: 'contain' }}
                         />
-                    </ScrollView>
+                        {/* Overlay */}
+                        <View style={StyleSheet.absoluteFill} pointerEvents="box-none">
+                            {/* Dimmed Areas constructed around the hole */}
+                            {/* Top Dim */}
+                            <View style={{ position: 'absolute', top: 0, left: 0, right: 0, height: cropRect.y, backgroundColor: 'rgba(0,0,0,0.6)' }} />
+                            {/* Bottom Dim */}
+                            <View style={{ position: 'absolute', top: cropRect.y + cropRect.h, left: 0, right: 0, bottom: 0, backgroundColor: 'rgba(0,0,0,0.6)' }} />
+                            {/* Left Dim */}
+                            <View style={{ position: 'absolute', top: cropRect.y, left: 0, width: cropRect.x, height: cropRect.h, backgroundColor: 'rgba(0,0,0,0.6)' }} />
+                            {/* Right Dim */}
+                            <View style={{ position: 'absolute', top: cropRect.y, left: cropRect.x + cropRect.w, right: 0, height: cropRect.h, backgroundColor: 'rgba(0,0,0,0.6)' }} />
 
-                    {/* Fixed Overlay */}
-                    <View style={styles.cropOverlay} pointerEvents="none">
-                        <View style={styles.dimBg} />
-                        <View style={styles.highlightBox}>
-                            <View style={[styles.corner, styles.topLeft]} />
-                            <View style={[styles.corner, styles.topRight]} />
-                            <View style={[styles.corner, styles.bottomLeft]} />
-                            <View style={[styles.corner, styles.bottomRight]} />
+                            {/* The Highlight Box */}
+                            <Animated.View
+                                style={[styles.highlightBox, {
+                                    left: cropRect.x,
+                                    top: cropRect.y,
+                                    width: cropRect.w,
+                                    height: cropRect.h,
+                                    position: 'absolute'
+                                }]}
+                                {...moveResponder.panHandlers}
+                            >
+                                <View style={[styles.corner, styles.topLeft]} {...resizeTL.panHandlers} />
+                                <View style={[styles.corner, styles.topRight]} {...resizeTR.panHandlers} />
+                                <View style={[styles.corner, styles.bottomLeft]} {...resizeBL.panHandlers} />
+                                <View style={[styles.corner, styles.bottomRight]} {...resizeBR.panHandlers} />
+                            </Animated.View>
                         </View>
-                        <View style={styles.dimBg} />
                     </View>
 
                     <View style={styles.instructionPill}>
-                        <Text style={styles.instructionText}>Move image to highlight text</Text>
+                        <Text style={styles.instructionText}>Zoom/Move to crop</Text>
                     </View>
 
-                    {/* Controls - Elevated */}
+                    {/* Controls */}
                     <View style={styles.cropActions}>
                         <TouchableOpacity style={styles.secondaryBtn} onPress={reset}>
                             <Text style={styles.secondaryBtnText}>Retake</Text>
                         </TouchableOpacity>
 
-                        <TouchableOpacity style={styles.primaryBtn} onPress={processCropAndScan}>
-                            {isProcessing ? <ActivityIndicator color="white" /> : <Text style={styles.primaryBtnText}>Scan Text</Text>}
+
+
+                        <TouchableOpacity style={styles.primaryBtn} onPress={() => processCropAndScan(false)}>
+                            {isProcessing ? <ActivityIndicator color="white" /> : <Text style={styles.primaryBtnText}>Crop & Scan</Text>}
                         </TouchableOpacity>
                     </View>
                 </View>
@@ -284,7 +440,6 @@ export default function CameraScreen() {
                     <View style={styles.card}>
                         <View style={styles.cardHeader}>
                             <Text style={styles.cardTitle}>Results</Text>
-
                         </View>
 
                         <ScrollView style={styles.cardBody}>
@@ -362,13 +517,13 @@ const styles = StyleSheet.create({
     scrollContent: { justifyContent: 'center', alignItems: 'center', minHeight: height },
     cropOverlay: { ...StyleSheet.absoluteFillObject, justifyContent: 'center', alignItems: 'center' },
     dimBg: { flex: 1, width: '100%', backgroundColor: 'rgba(0,0,0,0.6)' },
-    highlightBox: { width: CROP_BOX_WIDTH, height: CROP_BOX_HEIGHT, borderColor: '#61D8D8', borderWidth: 2, backgroundColor: 'transparent', zIndex: 10 },
+    highlightBox: { borderColor: '#61D8D8', borderWidth: 2, backgroundColor: 'transparent', zIndex: 10 },
 
-    corner: { position: 'absolute', width: 20, height: 20, borderColor: '#61D8D8', backgroundColor: 'transparent' },
-    topLeft: { top: -2, left: -2, borderTopWidth: 4, borderLeftWidth: 4 },
-    topRight: { top: -2, right: -2, borderTopWidth: 4, borderRightWidth: 4 },
-    bottomLeft: { bottom: -2, left: -2, borderBottomWidth: 4, borderLeftWidth: 4 },
-    bottomRight: { bottom: -2, right: -2, borderBottomWidth: 4, borderRightWidth: 4 },
+    corner: { position: 'absolute', width: 40, height: 40, borderColor: '#61D8D8', backgroundColor: 'transparent', zIndex: 20 },
+    topLeft: { top: -10, left: -10, borderTopWidth: 4, borderLeftWidth: 4 },
+    topRight: { top: -10, right: -10, borderTopWidth: 4, borderRightWidth: 4 },
+    bottomLeft: { bottom: -10, left: -10, borderBottomWidth: 4, borderLeftWidth: 4 },
+    bottomRight: { bottom: -10, right: -10, borderBottomWidth: 4, borderRightWidth: 4 },
 
     instructionPill: { position: 'absolute', top: 60, alignSelf: 'center', backgroundColor: 'rgba(0,0,0,0.7)', paddingHorizontal: 20, paddingVertical: 10, borderRadius: 20 },
     instructionText: { color: 'white', fontWeight: '600' },
@@ -379,8 +534,9 @@ const styles = StyleSheet.create({
         width: '100%',
         flexDirection: 'row',
         justifyContent: 'space-between',
-        paddingHorizontal: 30,
-        paddingBottom: 90,
+        paddingHorizontal: 20, // Reduced from 40
+
+        paddingBottom: 135, // Increased by 15px (110 -> 125 -> 135 to be safe)
         alignItems: 'center',
         backgroundColor: 'rgba(0,0,0,0.8)',
         paddingTop: 20,

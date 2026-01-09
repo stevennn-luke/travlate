@@ -11,7 +11,7 @@ export default function TabLayout() {
                 tabBarStyle: styles.tabBar,
                 tabBarActiveTintColor: '#61D8D8',
                 tabBarInactiveTintColor: '#333',
-                tabBarActiveBackgroundColor: 'rgba(0,0,0,0.04)', // Subtle highlight for active tab
+                tabBarActiveBackgroundColor: 'transparent',
                 tabBarShowLabel: true,
                 tabBarLabelStyle: styles.tabBarLabel,
                 tabBarItemStyle: styles.tabBarItem,
@@ -29,7 +29,7 @@ export default function TabLayout() {
                 options={{
                     title: 'Translate',
                     tabBarIcon: ({ color, focused }) => (
-                        <Ionicons name={focused ? "chatbubbles" : "chatbubbles-outline"} size={22} color={color} />
+                        <Ionicons name={focused ? "chatbubbles" : "chatbubbles-outline"} size={27} color={color} />
                     ),
                 }}
             />
@@ -38,7 +38,7 @@ export default function TabLayout() {
                 options={{
                     title: 'Maps',
                     tabBarIcon: ({ color, focused }) => (
-                        <Ionicons name={focused ? "map" : "map-outline"} size={22} color={color} />
+                        <Ionicons name={focused ? "map" : "map-outline"} size={27} color={color} />
                     ),
                 }}
             />
@@ -47,16 +47,16 @@ export default function TabLayout() {
                 options={{
                     title: 'Camera',
                     tabBarIcon: ({ color, focused }) => (
-                        <Ionicons name={focused ? "camera" : "camera-outline"} size={22} color={color} />
+                        <Ionicons name={focused ? "camera" : "camera-outline"} size={27} color={color} />
                     ),
                 }}
             />
             <Tabs.Screen
                 name="conversation"
                 options={{
-                    title: 'Conversation',
+                    title: 'Confab',
                     tabBarIcon: ({ color, focused }) => (
-                        <Ionicons name={focused ? "people" : "people-outline"} size={22} color={color} />
+                        <Ionicons name={focused ? "people" : "people-outline"} size={27} color={color} />
                     ),
                 }}
             />
@@ -70,8 +70,8 @@ const styles = StyleSheet.create({
         bottom: 30,
         left: 20,
         right: 20,
-        height: 72,
-        borderRadius: 36,
+        height: 78,
+        borderRadius: 39,
         backgroundColor: 'rgba(255, 255, 255, 0.98)',
         borderTopWidth: 0,
         elevation: 15,
@@ -82,29 +82,32 @@ const styles = StyleSheet.create({
         borderWidth: 1,
         borderColor: 'rgba(0,0,0,0.05)',
         paddingBottom: 0,
+        paddingTop: 9,
+        paddingHorizontal: 15,
         overflow: 'hidden',
     },
     blurBackground: {
         ...StyleSheet.absoluteFillObject,
-        borderRadius: 36,
+        borderRadius: 39,
         overflow: 'hidden',
     },
     androidBackground: {
         ...StyleSheet.absoluteFillObject,
         backgroundColor: '#FFFFFF',
-        borderRadius: 36,
+        borderRadius: 39,
     },
     tabBarItem: {
-        borderRadius: 28,
-        marginHorizontal: 8,
-        marginVertical: 6,
-        height: 60,
+        borderRadius: 38,
+        marginHorizontal: 0,
+        marginVertical: 4,
+        height: 70,
         justifyContent: 'center',
         alignItems: 'center',
     },
     tabBarLabel: {
         fontSize: 10,
         fontWeight: '700',
-        marginTop: -2,
+        marginTop: 5,
+        textAlign: 'center',
     },
 });

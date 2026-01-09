@@ -1,7 +1,8 @@
 import { Ionicons } from '@expo/vector-icons';
 import { Image } from 'expo-image';
 import { useRouter } from 'expo-router';
-import { ConfirmationResult, RecaptchaVerifier } from 'firebase/auth';
+import { ConfirmationResult, RecaptchaVerifier, updateProfile } from 'firebase/auth';
+import { doc, setDoc } from 'firebase/firestore';
 import { useEffect, useRef, useState } from 'react';
 import {
   Alert,
@@ -20,7 +21,7 @@ import {
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { useAuth } from '../contexts/AuthContext';
-import { auth } from '../firebase.config';
+import { auth, db } from '../firebase.config';
 
 declare global {
   interface Window {
@@ -167,8 +168,25 @@ export default function SignUpScreen() {
 
     try {
       setLoading(true);
-      await confirmResult.confirm(verificationCode);
-      // Ideally, update user profile with 'name' here
+      const userCredential = await confirmResult.confirm(verificationCode);
+      const user = userCredential.user;
+
+      if (user && name) {
+        // Update Auth Profile
+        await updateProfile(user, {
+          displayName: name
+        });
+
+        // Create User Document in Firestore
+        await setDoc(doc(db, 'users', user.uid), {
+          name: name,
+          email: user.email || null,
+          phoneNumber: user.phoneNumber,
+          createdAt: new Date(),
+          notificationsEnabled: true,
+        }, { merge: true });
+      }
+
       router.replace('/(tabs)');
     } catch (error: any) {
       console.error('Verify code error:', error);

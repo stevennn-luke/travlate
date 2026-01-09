@@ -1,22 +1,24 @@
 import { Ionicons } from '@expo/vector-icons';
+import { useCameraPermissions } from 'expo-camera';
+import * as Location from 'expo-location';
 import { Stack, useRouter } from 'expo-router';
-// linkWithCredential is used inside AuthContext but we import types/functions for local logic if needed
 import {
     PhoneAuthProvider,
     linkWithCredential,
-    updateProfile // We import this dynamically usually but static import is fine too
+    updateProfile
 } from 'firebase/auth';
-import { collection, deleteDoc, doc, getDoc, getDocs, setDoc } from 'firebase/firestore';
+import { doc, getDoc, setDoc } from 'firebase/firestore';
 import { useEffect, useRef, useState } from 'react';
-import { ActivityIndicator, Alert, Modal, ScrollView, StatusBar, StyleSheet, Switch, Text, TextInput, TouchableOpacity, View } from 'react-native';
+import { ActivityIndicator, Alert, AppState, Linking, Modal, ScrollView, StatusBar, StyleSheet, Switch, Text, TextInput, TouchableOpacity, View } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { useAuth } from '../contexts/AuthContext';
 import { auth, db } from '../firebase.config';
-import { clearLocalDatabase, getLocalUserProfile, initDatabase, saveLocalUserProfile } from './services/DatabaseService';
+import { getLocalUserProfile, initDatabase, saveLocalUserProfile } from './services/DatabaseService';
+import { ExpoSpeechRecognitionModule } from './utils/SafeSpeechRecognition';
+import { TranslateLanguage } from './utils/SafeTranslator';
 
 export default function ProfileScreen() {
     const router = useRouter();
-    // Removed authenticate as it's not used (since app lock removed)
     const { user, logout, linkEmail, linkPhone } = useAuth();
     const recaptchaVerifier = useRef(null);
 
@@ -27,10 +29,14 @@ export default function ProfileScreen() {
 
     const [notificationsEnabled, setNotificationsEnabled] = useState(true);
 
-    // Linking State
     const [showEmailModal, setShowEmailModal] = useState(false);
     const [showPhoneModal, setShowPhoneModal] = useState(false);
     const [showCodeModal, setShowCodeModal] = useState(false);
+
+    // New States for Content & Data
+    const [showDownloadsModal, setShowDownloadsModal] = useState(false);
+    const [showOcrModal, setShowOcrModal] = useState(false);
+
     const [newEmail, setNewEmail] = useState('');
     const [newPassword, setNewPassword] = useState('');
     const [newPhone, setNewPhone] = useState('');
@@ -38,22 +44,99 @@ export default function ProfileScreen() {
     const [verificationId, setVerificationId] = useState('');
     const [isLoading, setIsLoading] = useState(false);
 
+    const [downloadedOcrModels, setDownloadedOcrModels] = useState<string[]>(['Latin']); // Latin is usually default
+
+    const [cameraPerm, requestCameraPerm] = useCameraPermissions();
+    const [locationPerm, setLocationPerm] = useState<boolean>(false);
+    const [micPerm, setMicPerm] = useState<boolean>(false);
+
+    const [downloadedModels, setDownloadedModels] = useState<string[]>([]);
+    const [availableLanguages] = useState([
+        { code: TranslateLanguage.ENGLISH, name: 'English' },
+        { code: TranslateLanguage.SPANISH, name: 'Spanish' },
+        { code: TranslateLanguage.FRENCH, name: 'French' },
+        { code: TranslateLanguage.GERMAN, name: 'German' },
+        { code: TranslateLanguage.ITALIAN, name: 'Italian' },
+        { code: TranslateLanguage.JAPANESE, name: 'Japanese' },
+        { code: TranslateLanguage.KOREAN, name: 'Korean' },
+        { code: TranslateLanguage.HINDI, name: 'Hindi' },
+    ]);
+
     useEffect(() => {
         initDatabase();
         loadUserProfile();
+        checkPermissions();
+        setDownloadedModels(['English', 'Spanish']);
+
+        const subscription = AppState.addEventListener('change', nextAppState => {
+            if (nextAppState === 'active') {
+                checkPermissions();
+                // requestCameraPerm hook usually updates itself, but we can re-request status if needed
+                // or just rely on the hook's internal update if configured. 
+                // However, for consistency we might want to manually check if the hook doesn't auto-update on resume.
+            }
+        });
+
+        return () => {
+            subscription.remove();
+        };
     }, []);
+
+    const checkPermissions = async () => {
+        const locStatus = await Location.getForegroundPermissionsAsync();
+        setLocationPerm(locStatus.granted);
+
+        const micStatus = await ExpoSpeechRecognitionModule.getPermissionsAsync();
+        setMicPerm(micStatus.granted);
+    };
+
+    const togglePermission = async (type: 'camera' | 'location' | 'mic') => {
+        if (type === 'camera') {
+            if (!cameraPerm?.granted) {
+                const result = await requestCameraPerm();
+                if (!result.granted) openSettingsAlert('Camera');
+            } else {
+                openSettingsAlert('Camera');
+            }
+        } else if (type === 'location') {
+            if (!locationPerm) {
+                const result = await Location.requestForegroundPermissionsAsync();
+                setLocationPerm(result.granted);
+                if (!result.granted) openSettingsAlert('Location');
+            } else {
+                openSettingsAlert('Location');
+            }
+        } else if (type === 'mic') {
+            if (!micPerm) {
+                const result = await ExpoSpeechRecognitionModule.requestPermissionsAsync();
+                setMicPerm(result.granted);
+                if (!result.granted) openSettingsAlert('Microphone');
+            } else {
+                openSettingsAlert('Microphone');
+            }
+        }
+    };
+
+    const openSettingsAlert = (permName: string) => {
+        Alert.alert(
+            `${permName} Access`,
+            `To change ${permName} permissions, please go to your device settings.`,
+            [
+                { text: 'Cancel', style: 'cancel' },
+                { text: 'Open Settings', onPress: () => Linking.openSettings() }
+            ]
+        );
+    };
 
     const loadUserProfile = async () => {
         if (!user?.uid) return;
 
-        // 1. Load from Local SQLite
         const localProfile = getLocalUserProfile(user.uid);
         if (localProfile) {
             if (localProfile.name) setName(localProfile.name);
             setNotificationsEnabled(localProfile.notificationsEnabled === 1);
         }
 
-        // 2. Cloud sync
         try {
             const userDocRef = doc(db, 'users', user.uid);
             const userDoc = await getDoc(userDocRef);
@@ -63,7 +146,6 @@ export default function ProfileScreen() {
                 if (data.name) setName(data.name);
                 if (data.notificationsEnabled !== undefined) setNotificationsEnabled(data.notificationsEnabled);
 
-                // Update local DB
                 saveLocalUserProfile({
                     id: user.uid,
                     name: data.name || name,
@@ -71,13 +153,13 @@ export default function ProfileScreen() {
                     phoneNumber: user.phoneNumber || null,
                     selectedVoice: null,
                     notificationsEnabled: data.notificationsEnabled ? 1 : 0,
-                    voiceAssistantEnabled: 0, // Disabled feature
-                    appLockEnabled: 0, // Disabled feature
+                    voiceAssistantEnabled: 0,
+                    appLockEnabled: 0,
                     updatedAt: new Date().toISOString()
                 });
             }
-        } catch (error) {
-            console.error('Error loading user profile from cloud:', error);
+        } catch (error: any) {
+            console.log('Error loading user profile:', error);
         }
     };
 
@@ -90,7 +172,6 @@ export default function ProfileScreen() {
         setIsEditing(false);
 
         try {
-            // 1. Save Local (SQLite)
             saveLocalUserProfile({
                 id: user.uid,
                 name: name,
@@ -103,7 +184,6 @@ export default function ProfileScreen() {
                 updatedAt: new Date().toISOString()
             });
 
-            // 2. Save to Firestore (Cloud)
             const userDocRef = doc(db, 'users', user.uid);
             const userData = {
                 name: name,
@@ -115,11 +195,7 @@ export default function ProfileScreen() {
 
             await setDoc(userDocRef, userData, { merge: true });
 
-            // Update Auth Profile
             if (name !== user.displayName && user) {
-                // We use dynamic import to avoid issues or standard import
-                // const { updateProfile } = await import('firebase/auth');
-                // Actually simple import is fine since we are in RN
                 await updateProfile(user, { displayName: name });
             }
 
@@ -154,8 +230,7 @@ export default function ProfileScreen() {
         }
         setIsLoading(true);
         try {
-            // @ts-ignore
-            const confirmation = await linkPhone(newPhone, recaptchaVerifier.current);
+            const confirmation = await linkPhone(newPhone, recaptchaVerifier.current as any);
             setVerificationId(confirmation.verificationId);
             setShowPhoneModal(false);
             setShowCodeModal(true);
@@ -170,9 +245,6 @@ export default function ProfileScreen() {
         if (!verificationCode || !verificationId) return;
         setIsLoading(true);
         try {
-            // Verify code logic uses PhoneAuthProvider credential
-            // But we can also use confirmationResult.confirm() if we had the object. 
-            // Since we stored ID, we use credential.
             const credential = PhoneAuthProvider.credential(verificationId, verificationCode);
             if (auth.currentUser) {
                 await linkWithCredential(auth.currentUser, credential);
@@ -200,64 +272,10 @@ export default function ProfileScreen() {
                             await logout();
                             router.replace('/');
                         } catch (error: any) {
-                            console.error('Logout error:', error.message);
-                            Alert.alert('Error', 'Failed to logout. Please try again.');
+                            Alert.alert('Error', 'Failed to logout.');
                         }
                     },
                 },
-            ]
-        );
-    };
-
-    const handleClearAllData = async () => {
-        Alert.alert(
-            '⚠️ Clear All Data',
-            'This will permanently delete ALL items, logs, and user data from both local and cloud storage. This action cannot be undone!',
-            [
-                { text: 'Cancel', style: 'cancel' },
-                {
-                    text: 'Clear Everything',
-                    style: 'destructive',
-                    onPress: async () => {
-                        try {
-                            setIsLoading(true);
-
-                            // Clear Firestore collections
-                            const collections = ['items', 'logs', 'users'];
-                            let totalDeleted = 0;
-
-                            for (const collectionName of collections) {
-                                const querySnapshot = await getDocs(collection(db, collectionName));
-                                for (const docSnap of querySnapshot.docs) {
-                                    await deleteDoc(doc(db, collectionName, docSnap.id));
-                                    totalDeleted++;
-                                }
-                            }
-
-                            // Clear local database
-                            clearLocalDatabase();
-
-                            Alert.alert(
-                                'Success',
-                                `All data cleared! Deleted ${totalDeleted} cloud documents and cleared local database.`,
-                                [
-                                    {
-                                        text: 'OK',
-                                        onPress: () => {
-                                            logout();
-                                            router.replace('/');
-                                        }
-                                    }
-                                ]
-                            );
-                        } catch (error: any) {
-                            console.error('Error clearing data:', error);
-                            Alert.alert('Error', 'Failed to clear all data: ' + error.message);
-                        } finally {
-                            setIsLoading(false);
-                        }
-                    }
-                }
             ]
         );
     };
@@ -267,29 +285,32 @@ export default function ProfileScreen() {
             <Stack.Screen options={{ headerShown: false }} />
             <StatusBar barStyle="dark-content" backgroundColor="#ffffff" />
 
-            <ScrollView style={styles.content} contentContainerStyle={styles.contentContainer}>
-                {/* Home Back Button */}
+            <View style={{ paddingHorizontal: 24, paddingTop: 10, paddingBottom: 10 }}>
                 <TouchableOpacity
                     style={{
-                        position: 'absolute',
-                        top: 20,
-                        left: 20,
-                        zIndex: 10,
-                        padding: 8,
+                        width: 40,
+                        height: 40,
+                        borderRadius: 20,
+                        backgroundColor: '#fff',
+                        justifyContent: 'center',
+                        alignItems: 'center',
+                        shadowColor: '#000',
+                        shadowOffset: { width: 0, height: 2 },
+                        shadowOpacity: 0.1,
+                        shadowRadius: 4,
+                        elevation: 3,
+                        marginBottom: 20
                     }}
                     onPress={() => router.back()}
                 >
                     <Ionicons name="chevron-back" size={24} color="#000" />
                 </TouchableOpacity>
+                <Text style={{ fontSize: 32, fontWeight: '700', color: '#000' }}>Profile</Text>
+            </View>
 
-                {/* Profile Header */}
-                <View style={[styles.section, { marginBottom: 24 }]}>
-                    <Text style={{ fontSize: 32, fontWeight: '700', color: '#000' }}>Profile</Text>
-                </View>
+            <ScrollView style={styles.content} contentContainerStyle={styles.contentContainer} showsVerticalScrollIndicator={false}>
 
-                {/* Personal Details Form */}
                 <View style={styles.section}>
-                    {/* Name */}
                     <View style={styles.formGroup}>
                         <Text style={styles.label}>Name</Text>
                         <TextInput
@@ -302,7 +323,6 @@ export default function ProfileScreen() {
                         />
                     </View>
 
-                    {/* Email */}
                     <View style={styles.formGroup}>
                         <Text style={styles.label}>Email</Text>
                         <TextInput
@@ -322,7 +342,6 @@ export default function ProfileScreen() {
                         )}
                     </View>
 
-                    {/* Phone */}
                     <View style={styles.formGroup}>
                         <Text style={styles.label}>Phone Number</Text>
                         <TextInput
@@ -340,7 +359,6 @@ export default function ProfileScreen() {
                         )}
                     </View>
 
-                    {/* Edit Actions */}
                     <View style={styles.editActionsContainer}>
                         {isEditing ? (
                             <>
@@ -359,52 +377,101 @@ export default function ProfileScreen() {
                     </View>
                 </View>
 
-                {/* Account Settings */}
                 <View style={styles.section}>
-                    <Text style={styles.sectionTitle}>Settings</Text>
+                    <Text style={styles.sectionTitle}>Permissions</Text>
 
                     <View style={styles.settingItem}>
                         <View style={styles.settingItemLeft}>
-                            <Ionicons name="notifications-outline" size={24} color="#000" />
-                            <Text style={styles.settingItemText}>Notifications</Text>
+                            <Ionicons name="mic-outline" size={24} color="#000" />
+                            <Text style={styles.settingItemText}>Microphone</Text>
                         </View>
                         <Switch
-                            value={notificationsEnabled}
-                            onValueChange={setNotificationsEnabled}
-                            trackColor={{ false: "#e0e0e0", true: "#000" }}
+                            value={micPerm}
+                            onValueChange={() => togglePermission('mic')}
+                            trackColor={{ false: "#e0e0e0", true: "#61D8D8" }}
                         />
                     </View>
 
-                    <TouchableOpacity style={styles.settingItem}>
+                    <View style={styles.settingItem}>
                         <View style={styles.settingItemLeft}>
-                            <Ionicons name="help-circle-outline" size={24} color="#000" />
-                            <Text style={styles.settingItemText}>Help & Support</Text>
+                            <Ionicons name="camera-outline" size={24} color="#000" />
+                            <Text style={styles.settingItemText}>Camera</Text>
                         </View>
-                        <Ionicons name="chevron-forward" size={24} color="#999" />
+                        <Switch
+                            value={cameraPerm?.granted || false}
+                            onValueChange={() => togglePermission('camera')}
+                            trackColor={{ false: "#e0e0e0", true: "#61D8D8" }}
+                        />
+                    </View>
+
+                    <View style={styles.settingItem}>
+                        <View style={styles.settingItemLeft}>
+                            <Ionicons name="location-outline" size={24} color="#000" />
+                            <Text style={styles.settingItemText}>Location</Text>
+                        </View>
+                        <Switch
+                            value={locationPerm}
+                            onValueChange={() => togglePermission('location')}
+                            trackColor={{ false: "#e0e0e0", true: "#61D8D8" }}
+                        />
+                    </View>
+                </View>
+
+                <View style={styles.section}>
+                    <Text style={styles.sectionTitle}>Content & Data</Text>
+                    <TouchableOpacity
+                        style={[
+                            styles.settingItem,
+                            {
+                                backgroundColor: '#f5f5f5',
+                                borderRadius: 8,
+                                paddingHorizontal: 16,
+                                borderBottomWidth: 0,
+                                marginBottom: 10
+                            }
+                        ]}
+                        onPress={() => setShowDownloadsModal(true)}
+                    >
+                        <View style={styles.settingItemLeft}>
+                            <Ionicons name="cloud-download-outline" size={24} color="#000" />
+                            <Text style={styles.settingItemText}>Offline Translation</Text>
+                        </View>
+                        <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8 }}>
+                            <Ionicons name="chevron-forward" size={20} color="#ccc" />
+                        </View>
+                    </TouchableOpacity>
+
+                    <TouchableOpacity
+                        style={[
+                            styles.settingItem,
+                            {
+                                backgroundColor: '#f5f5f5',
+                                borderRadius: 8,
+                                paddingHorizontal: 16,
+                                borderBottomWidth: 0,
+                                marginBottom: 0
+                            }
+                        ]}
+                        onPress={() => setShowOcrModal(true)}
+                    >
+                        <View style={styles.settingItemLeft}>
+                            <Ionicons name="scan-outline" size={24} color="#000" />
+                            <Text style={styles.settingItemText}>Offline OCR Models</Text>
+                        </View>
+                        <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8 }}>
+                            <Ionicons name="chevron-forward" size={20} color="#ccc" />
+                        </View>
                     </TouchableOpacity>
                 </View>
 
-                {/* Clear All Data Button */}
-                <TouchableOpacity
-                    style={styles.clearDataButton}
-                    onPress={handleClearAllData}
-                    disabled={isLoading}
-                >
-                    <Ionicons name="trash-outline" size={24} color="#ff9500" />
-                    <Text style={styles.clearDataButtonText}>Clear All Data</Text>
-                </TouchableOpacity>
-
-                {/* Logout Button */}
                 <TouchableOpacity style={styles.logoutButton} onPress={handleLogout}>
                     <Ionicons name="log-out-outline" size={24} color="#ff3b30" />
                     <Text style={styles.logoutButtonText}>Logout</Text>
                 </TouchableOpacity>
 
-                {/* App Version */}
                 <Text style={styles.versionText}>Version 1.0.0</Text>
             </ScrollView>
 
-            {/* Email Link Modal */}
             <Modal visible={showEmailModal} animationType="slide" transparent={true}>
                 <View style={styles.centeredModalOverlay}>
                     <View style={styles.centeredModalContent}>
@@ -436,7 +503,6 @@ export default function ProfileScreen() {
                 </View>
             </Modal>
 
-            {/* Phone Link Modal */}
             <Modal visible={showPhoneModal} animationType="slide" transparent={true}>
                 <View style={styles.centeredModalOverlay}>
                     <View style={styles.centeredModalContent}>
@@ -460,7 +526,6 @@ export default function ProfileScreen() {
                 </View>
             </Modal>
 
-            {/* Verification Code Modal */}
             <Modal visible={showCodeModal} animationType="slide" transparent={true}>
                 <View style={styles.centeredModalOverlay}>
                     <View style={styles.centeredModalContent}>
@@ -484,6 +549,160 @@ export default function ProfileScreen() {
                 </View>
             </Modal>
 
+            <Modal visible={showDownloadsModal} animationType="slide" presentationStyle="pageSheet">
+                <View style={{ flex: 1, backgroundColor: '#f2f2f7' }}>
+                    <View style={{ padding: 24, paddingTop: 50, paddingBottom: 10 }}>
+                        <TouchableOpacity
+                            style={{
+                                width: 40,
+                                height: 40,
+                                borderRadius: 20,
+                                backgroundColor: '#fff',
+                                justifyContent: 'center',
+                                alignItems: 'center',
+                                shadowColor: '#000',
+                                shadowOffset: { width: 0, height: 2 },
+                                shadowOpacity: 0.1,
+                                shadowRadius: 4,
+                                elevation: 3,
+                                marginBottom: 20
+                            }}
+                            onPress={() => setShowDownloadsModal(false)}
+                        >
+                            <Ionicons name="chevron-back" size={24} color="#000" />
+                        </TouchableOpacity>
+                        <Text style={{ fontSize: 32, fontWeight: '700', color: '#000', marginTop: 10 }}>Offline Languages</Text>
+                    </View>
+
+                    <ScrollView contentContainerStyle={{ padding: 20 }}>
+                        <View style={{ backgroundColor: '#fff', borderRadius: 12, overflow: 'hidden' }}>
+                            {availableLanguages.map((lang, index) => {
+                                const isDownloaded = downloadedModels.includes(lang.name);
+                                return (
+                                    <View key={index} style={[
+                                        styles.settingItem,
+                                        {
+                                            paddingHorizontal: 16,
+                                            borderBottomWidth: index === availableLanguages.length - 1 ? 0 : 1
+                                        }
+                                    ]}>
+                                        <Text style={styles.settingItemText}>{lang.name}</Text>
+                                        {isDownloaded ? (
+                                            <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}>
+                                                <Ionicons name="checkmark-circle" size={20} color="#61D8D8" />
+                                                <Text style={{ color: '#333', fontSize: 14 }}>Downloaded</Text>
+                                            </View>
+                                        ) : (
+                                            <TouchableOpacity onPress={() => {
+                                                Alert.alert('Download', `Download ${lang.name} language model?`, [
+                                                    { text: 'Cancel' },
+                                                    {
+                                                        text: 'Download', onPress: () => {
+                                                            setIsLoading(true);
+                                                            setTimeout(() => {
+                                                                setDownloadedModels((prev: string[]) => [...prev, lang.name]);
+                                                                setIsLoading(false);
+                                                            }, 1500);
+                                                        }
+                                                    }
+                                                ]);
+                                            }}>
+                                                <Ionicons name="download-outline" size={24} color="#007AFF" />
+                                            </TouchableOpacity>
+                                        )}
+                                    </View>
+                                );
+                            })}
+                        </View>
+                        <Text style={{ marginTop: 12, color: '#666', fontSize: 13, paddingHorizontal: 12 }}>
+                            Downloaded languages allow you to translate text and speech even when you have no internet connection.
+                        </Text>
+                    </ScrollView>
+                </View>
+            </Modal>
+
+            <Modal visible={showOcrModal} animationType="slide" presentationStyle="pageSheet">
+                <View style={{ flex: 1, backgroundColor: '#f2f2f7' }}>
+                    <View style={{ padding: 24, paddingTop: 50, paddingBottom: 10 }}>
+                        <TouchableOpacity
+                            style={{
+                                width: 40,
+                                height: 40,
+                                borderRadius: 20,
+                                backgroundColor: '#fff',
+                                justifyContent: 'center',
+                                alignItems: 'center',
+                                shadowColor: '#000',
+                                shadowOffset: { width: 0, height: 2 },
+                                shadowOpacity: 0.1,
+                                shadowRadius: 4,
+                                elevation: 3,
+                                marginBottom: 20
+                            }}
+                            onPress={() => setShowOcrModal(false)}
+                        >
+                            <Ionicons name="chevron-back" size={24} color="#000" />
+                        </TouchableOpacity>
+                        <Text style={{ fontSize: 32, fontWeight: '700', color: '#000', marginTop: 10 }}>Offline OCR Models</Text>
+                    </View>
+
+                    <ScrollView contentContainerStyle={{ padding: 20 }}>
+                        <View style={{ backgroundColor: '#fff', borderRadius: 12, overflow: 'hidden' }}>
+                            {[
+                                { name: 'Latin', desc: 'English, Spanish, French, Italian, German, etc.' },
+                                { name: 'Chinese', desc: 'Chinese (Simplified & Traditional)' },
+                                { name: 'Japanese', desc: 'Japanese' },
+                                { name: 'Korean', desc: 'Korean' },
+                                { name: 'Devanagari', desc: 'Hindi, Marathi, Nepali, etc.' },
+                            ].map((script, index, arr) => {
+                                const isDownloaded = downloadedOcrModels.includes(script.name);
+                                return (
+                                    <View key={index} style={[
+                                        styles.settingItem,
+                                        {
+                                            paddingHorizontal: 16,
+                                            borderBottomWidth: index === arr.length - 1 ? 0 : 1
+                                        }
+                                    ]}>
+                                        <View style={{ flex: 1, marginRight: 10 }}>
+                                            <Text style={styles.settingItemText}>{script.name}</Text>
+                                            <Text style={{ fontSize: 12, color: '#888', marginTop: 2 }}>{script.desc}</Text>
+                                        </View>
+
+                                        {isDownloaded ? (
+                                            <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}>
+                                                <Ionicons name="checkmark-circle" size={20} color="#61D8D8" />
+                                                <Text style={{ color: '#333', fontSize: 14 }}>Ready</Text>
+                                            </View>
+                                        ) : (
+                                            <TouchableOpacity onPress={() => {
+                                                Alert.alert('Download', `Download ${script.name} OCR model?`, [
+                                                    { text: 'Cancel' },
+                                                    {
+                                                        text: 'Download', onPress: () => {
+                                                            setIsLoading(true);
+                                                            // Mock download delay
+                                                            setTimeout(() => {
+                                                                setDownloadedOcrModels(prev => [...prev, script.name]);
+                                                                setIsLoading(false);
+                                                            }, 2000);
+                                                        }
+                                                    }
+                                                ]);
+                                            }}>
+                                                <Ionicons name="download-outline" size={24} color="#007AFF" />
+                                            </TouchableOpacity>
+                                        )}
+                                    </View>
+                                );
+                            })}
+                        </View>
+                        <Text style={{ marginTop: 12, color: '#666', fontSize: 13, paddingHorizontal: 12 }}>
+                            These models allow the camera to recognize text in specific scripts without an internet connection.
+                        </Text>
+                    </ScrollView>
+                </View>
+            </Modal>
         </SafeAreaView>
     );
 }
@@ -499,7 +718,7 @@ const styles = StyleSheet.create({
     contentContainer: {
         paddingHorizontal: 24,
         paddingBottom: 40,
-        paddingTop: 60,
+        paddingTop: 10,
     },
     editActionsContainer: {
         flexDirection: 'row',
@@ -575,37 +794,20 @@ const styles = StyleSheet.create({
         flexDirection: 'row',
         justifyContent: 'space-between',
         alignItems: 'center',
-        paddingVertical: 16,
+        paddingVertical: 12, // Reduced from 16
         borderBottomWidth: 1,
         borderBottomColor: '#f0f0f0',
     },
     settingItemLeft: {
         flexDirection: 'row',
         alignItems: 'center',
-        gap: 12,
+        gap: 12, // Reduced gap generally, but permissions needs specific tightening? No, standard 12 is fine, maybe paddingVertical caused the "gap" in rows
     },
     settingItemText: {
         fontSize: 16,
         color: '#000',
     },
-    clearDataButton: {
-        flexDirection: 'row',
-        alignItems: 'center',
-        justifyContent: 'center',
-        gap: 12,
-        paddingVertical: 16,
-        paddingHorizontal: 24,
-        borderRadius: 12,
-        backgroundColor: '#fff',
-        borderWidth: 2,
-        borderColor: '#ff9500',
-        marginTop: 20,
-    },
-    clearDataButtonText: {
-        fontSize: 16,
-        fontWeight: '600',
-        color: '#ff9500',
-    },
+
     logoutButton: {
         flexDirection: 'row',
         alignItems: 'center',

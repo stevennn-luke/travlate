@@ -1,10 +1,17 @@
 import { Stack, useRouter } from 'expo-router';
 import { StatusBar } from 'expo-status-bar';
 import { useEffect } from 'react';
+import { Platform } from 'react-native';
 import 'react-native-reanimated';
 import { AuthProvider, useAuth } from '../contexts/AuthContext';
 
+// Ensure native firebase is initialized
+if (Platform.OS !== 'web') {
+  require('@react-native-firebase/app');
+}
+
 function RootNavigator() {
+  // ... existing code ...
   const { user, loading } = useAuth();
   const router = useRouter();
 

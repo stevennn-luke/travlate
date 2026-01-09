@@ -33,6 +33,14 @@ const translateWebFallback = async (text: string, source: string, target: string
     }
 };
 
+// Helper to prevent infinite hangs
+const withTimeout = <T>(promise: Promise<T>, ms: number, fallbackValue: T): Promise<T> => {
+    return Promise.race([
+        promise,
+        new Promise<T>((resolve) => setTimeout(() => resolve(fallbackValue), ms))
+    ]);
+};
+
 export const SafeTranslate = async (options: {
     text: string;
     sourceLanguage: any;
@@ -40,22 +48,46 @@ export const SafeTranslate = async (options: {
     downloadModelIfNeeded?: boolean;
 }): Promise<string> => {
     try {
-        const result = await TranslateText.translate(options);
-        return typeof result === 'string' ? result : (result as any).text || '';
+        // Try Native ML Kit with a 5s timeout
+        const result = await withTimeout(
+            TranslateText.translate(options),
+            5000,
+            null
+        );
+
+        if (result !== null) {
+            return typeof result === 'string' ? result : (result as any).text || '';
+        }
     } catch (e: any) {
-        console.warn('ML Kit Translate failed, trying fallback:', e);
+        console.warn('ML Kit Translate failed/timed out, trying fallback:', e);
 
         if (e.message?.includes('download') || e.code === 'E_DOWNLOAD_FAILED') {
             return "Offline Model Missing. Please Connect to Internet.";
         }
     }
 
-    return translateWebFallback(options.text, options.sourceLanguage, options.targetLanguage);
+    // Fallback to Web API (also with timeout)
+    return withTimeout(
+        translateWebFallback(options.text, options.sourceLanguage, options.targetLanguage),
+        5000,
+        "Translation timed out."
+    );
 };
 
-export const SafeOCR = async (imageUri: string): Promise<string> => {
+export const SafeOCR = async (imageUri: string, script?: string): Promise<string> => {
     try {
-        const result = await TextRecognition.recognize(imageUri);
+        console.log("Starting OCR for:", imageUri);
+        // Wrap OCR in a timeout (10s limit)
+        const result = await withTimeout(
+            TextRecognition.recognize(imageUri),
+            10000,
+            { text: "", blocks: [] } as any // Fallback object if it times out
+        );
+
+        if (!result || !result.text) {
+            console.log("OCR returned empty result");
+            return "";
+        }
         return result.text;
     } catch (e) {
         console.warn('Native OCR failed or not available:', e);

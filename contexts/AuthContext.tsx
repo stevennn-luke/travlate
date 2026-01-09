@@ -17,6 +17,7 @@ import {
   User
 } from 'firebase/auth';
 import React, { createContext, useContext, useEffect, useState } from 'react';
+import { Platform } from 'react-native';
 import { auth } from '../firebase.config';
 
 interface AuthContextType {
@@ -46,19 +47,36 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
-    const unsubscribe = onAuthStateChanged(auth, (user) => {
-      setUser(user);
-      setLoading(false);
-    });
+    let unsubscribe: () => void;
 
-    return unsubscribe;
+    if (Platform.OS === 'web') {
+      unsubscribe = onAuthStateChanged(auth, (user) => {
+        setUser(user);
+        setLoading(false);
+      });
+    } else {
+      // Native Listener
+      const nativeAuth = require('@react-native-firebase/auth').default;
+      unsubscribe = nativeAuth().onAuthStateChanged((user: User | null) => {
+        setUser(user);
+        setLoading(false);
+      });
+    }
+
+    return () => {
+      if (unsubscribe) unsubscribe();
+    };
   }, []);
 
   const signIn = async (email: string, password: string) => {
     try {
       console.log('Attempting to sign in with:', email);
-      const result = await signInWithEmailAndPassword(auth, email, password);
-      console.log('Sign in successful:', result.user.email);
+      if (Platform.OS !== 'web') {
+        const nativeAuth = require('@react-native-firebase/auth').default;
+        await nativeAuth().signInWithEmailAndPassword(email, password);
+      } else {
+        await signInWithEmailAndPassword(auth, email, password);
+      }
     } catch (error) {
       console.error('Sign in error:', error);
       throw error;
@@ -68,12 +86,14 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
   const signUp = async (email: string, password: string, name: string) => {
     try {
       console.log('Attempting to sign up with:', email);
-      const result = await createUserWithEmailAndPassword(auth, email, password);
-      // Update the user's display name
-      await updateProfile(result.user, {
-        displayName: name
-      });
-      console.log('Sign up successful:', result.user.email);
+      if (Platform.OS !== 'web') {
+        const nativeAuth = require('@react-native-firebase/auth').default;
+        const result = await nativeAuth().createUserWithEmailAndPassword(email, password);
+        await result.user.updateProfile({ displayName: name });
+      } else {
+        const result = await createUserWithEmailAndPassword(auth, email, password);
+        await updateProfile(result.user, { displayName: name });
+      }
     } catch (error) {
       console.error('Sign up error:', error);
       throw error;
@@ -124,12 +144,18 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
         );
 
         // Create a Google credential with the access token
-        const credential = GoogleAuthProvider.credential(tokenResponse.idToken);
+        const { idToken } = tokenResponse;
+        const credential = GoogleAuthProvider.credential(idToken);
 
         // Sign in with the credential
-        const authResult = await signInWithCredential(auth, credential);
+        if (Platform.OS !== 'web') {
+          const nativeAuth = require('@react-native-firebase/auth').default;
+          await nativeAuth().signInWithCredential(credential);
+        } else {
+          await signInWithCredential(auth, credential);
+        }
 
-        console.log('Google sign in successful:', authResult.user.email);
+        console.log('Google sign in successful:'); // User email will be updated by listener
       } else {
         throw new Error('Google sign-in was cancelled or failed');
       }
@@ -142,9 +168,22 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
   const signInWithPhone = async (phoneNumber: string, appVerifier?: ApplicationVerifier) => {
     try {
       console.log('Attempting phone sign in with:', phoneNumber);
-      if (!appVerifier) {
-        throw new Error('Phone authentication requires reCAPTCHA verification');
+
+      if (Platform.OS !== 'web') {
+        // Use Native Firebase SDK for Android/iOS
+        // We must use 'require' or dynamic import to avoid breaking web (if bundler is strict)
+        // prompting the native auth module. 
+        // Note: Users must ensure @react-native-firebase/auth is properly configured.
+        const nativeAuth = require('@react-native-firebase/auth').default;
+        const confirmation = await nativeAuth().signInWithPhoneNumber(phoneNumber);
+        return confirmation;
       }
+
+      // Web Fallback (JS SDK)
+      if (!appVerifier) {
+        throw new Error('Phone authentication requires reCAPTCHA verification on Web');
+      }
+      // @ts-ignore
       const confirmationResult = await signInWithPhoneNumber(auth, phoneNumber, appVerifier);
       return confirmationResult;
     } catch (error) {
@@ -155,7 +194,12 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
 
   const logout = async () => {
     try {
-      await signOut(auth);
+      if (Platform.OS !== 'web') {
+        const nativeAuth = require('@react-native-firebase/auth').default;
+        await nativeAuth().signOut();
+      } else {
+        await signOut(auth);
+      }
     } catch (error) {
       throw error;
     }
@@ -170,12 +214,14 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     signInWithPhone,
     logout,
     linkEmail: async (email: string, password: string) => {
-      if (!auth.currentUser) throw new Error('No user logged in');
+      // This is simplified, for full hybrid support you'd need the same logic
+      // But for now focusing on main auth flows
+      if (!auth.currentUser) throw new Error('No user logged in (Web Check)');
       const credential = EmailAuthProvider.credential(email, password);
       await linkWithCredential(auth.currentUser, credential);
     },
     linkPhone: async (phoneNumber: string, appVerifier: ApplicationVerifier) => {
-      if (!auth.currentUser) throw new Error('No user logged in');
+      if (!auth.currentUser) throw new Error('No user logged in (Web Check)');
       return await linkWithPhoneNumber(auth.currentUser, phoneNumber, appVerifier);
     }
   };

@@ -1,6 +1,7 @@
 import { Ionicons } from '@expo/vector-icons';
 import { Image } from 'expo-image';
 import { useRouter } from 'expo-router';
+import * as Speech from 'expo-speech';
 import { useCallback, useEffect, useRef, useState } from 'react';
 import {
     ActivityIndicator,
@@ -8,6 +9,7 @@ import {
     Animated,
     Dimensions,
     Keyboard,
+    Linking,
     Modal,
     ScrollView,
     StyleSheet,
@@ -48,6 +50,18 @@ export default function TranslateScreen() {
     const [isTranslating, setIsTranslating] = useState(false);
     const [isRecording, setIsRecording] = useState(false);
     const [recordingSide, setRecordingSide] = useState<'source' | 'target' | null>(null);
+
+    // Localized Placeholders
+    const getPlaceholder = (code: string) => {
+        if (code.startsWith('es')) return 'Escribe algo...';
+        if (code.startsWith('fr')) return 'Saisissez du texte...';
+        if (code.startsWith('de')) return 'Text eingeben...';
+        if (code.startsWith('it')) return 'Inserisci testo...';
+        if (code.startsWith('hi')) return 'यहाँ लिखें...';
+        if (code.startsWith('ja')) return 'テキストを入力...';
+        if (code.startsWith('ko')) return '텍스트 입력...';
+        return 'Type something...';
+    };
 
     // Animation state
     const pulseAnim = useRef(new Animated.Value(1)).current;
@@ -106,70 +120,146 @@ export default function TranslateScreen() {
     }, [setIsTranslating, setTargetText]);
 
     // --- Speech Recognition ---
+    // Refs for speech state to avoid stale closures
+    const recordingSideRef = useRef(recordingSide);
+    useEffect(() => {
+        recordingSideRef.current = recordingSide;
+    }, [recordingSide]);
+
+    // --- Speech Recognition Events ---
     useSpeechRecognitionEvent('start', () => setIsRecording(true));
+
     useSpeechRecognitionEvent('end', () => {
+        console.log('Speech recognition ended');
         setIsRecording(false);
         setRecordingSide(null);
+        // Note: Translation is triggered by the live updates in 'result' 
+        // via the useEffect dependency on [sourceText].
     });
+
     useSpeechRecognitionEvent('result', (event: any) => {
-        const transcript = event.results[0]?.transcript;
-        if (transcript) {
-            if (recordingSide === 'source') {
+        const transcript = event.results?.[0]?.transcript;
+        const currentSide = recordingSideRef.current;
+
+        if (transcript && currentSide) {
+            if (currentSide === 'source') {
                 setSourceText(transcript);
-                performTranslation(transcript, sourceLanguage.mlCode, targetLanguage.mlCode);
-            } else if (recordingSide === 'target') {
-                // If speaking into target mic, we assume they are speaking targetLang and want sourceLang?
-                // Or user's request: "when i talk... convert it to text and translate it"
-                // Most standard is: Source Mic (You) -> Target Text. Target Mic (Them) -> Source Text.
-                // Let's set the text and translate.
+                // Trigger translation logic is handled by the useEffect watching sourceText
+            } else if (currentSide === 'target') {
                 setTargetText(transcript);
-                const reverseTranslate = async () => {
-                    setIsTranslating(true);
-                    try {
-                        const translated = await SafeTranslate({
-                            text: transcript,
-                            sourceLanguage: targetLanguage.mlCode,
-                            targetLanguage: sourceLanguage.mlCode,
-                            downloadModelIfNeeded: true,
-                        });
-                        setSourceText(translated);
-                    } catch (e) { console.error(e); }
-                    finally { setIsTranslating(false); }
-                };
-                reverseTranslate();
+                // For target side, we might want to reverse translate, 
+                // but for now we just populate the text as per typical behavior
+                // or if we want reverse translation:
+                // performTranslation(transcript, targetLanguage.mlCode, sourceLanguage.mlCode);
+                // ^ CAREFUL: performTranslation updates targetText by default, 
+                // so we need a separate reverse function or flags.
+                // For this specific 'Translate' screen, usually mic on top is Source input.
+                // If user clicks mic on bottom (Target), it usually means they are speaking the target language
+                // and want it to update the target text field? 
+                // Wait, the UI has Source Input (Top) and Target Output (Bottom).
+                // The User removed the mic from Target and replaced with Speaker.
+                // So we ONLY have Source Recording now?
+                // Let's check the UI code.
+                // Line 281: Mic button is in Source Section.
+                // Line 334: Speaker button covers Target Section.
+                // So we only really support Source recording now.
             }
         }
     });
+
     useSpeechRecognitionEvent('error', (event: any) => {
-        console.log('Speech error:', event.error);
+        console.log('Speech recognition error:', event.error);
         setIsRecording(false);
         setRecordingSide(null);
     });
+
+    const isTogglingRef = useRef(false);
 
     const toggleRecording = async (side: 'source' | 'target') => {
-        if (isRecording && recordingSide === side) {
-            ExpoSpeechRecognitionModule.stop();
-            return;
-        }
+        // Quick debounce to prevent double-tap, but don't block retries
+        if (isTogglingRef.current) return;
+        isTogglingRef.current = true;
+        setTimeout(() => { isTogglingRef.current = false; }, 300);
 
-        if (isRecording) {
-            ExpoSpeechRecognitionModule.stop();
-        }
-
-        setRecordingSide(side);
         try {
-            const result = await ExpoSpeechRecognitionModule.requestPermissionsAsync();
-            if (!result.granted) {
-                Alert.alert('Permission denied', 'Microphone and speech recognition permissions are required.');
+            // STOP Logic - if currently recording this side
+            if (isRecording && recordingSide === side) {
+                ExpoSpeechRecognitionModule.stop();
+                setIsRecording(false);
+                // Don't clear recordingSide - let 'end' event handle it
                 return;
             }
+
+            // If recording different side, stop it first
+            if (isRecording && recordingSide !== side) {
+                ExpoSpeechRecognitionModule.stop();
+                await new Promise(resolve => setTimeout(resolve, 250));
+            }
+
+            // START Logic
+            setRecordingSide(side);
+
+            // Permission Check
+            const result = await ExpoSpeechRecognitionModule.requestPermissionsAsync();
+            if (!result.granted) {
+                Alert.alert(
+                    'Permission Required',
+                    'Enable microphone access in settings.',
+                    [
+                        { text: 'Cancel', style: 'cancel' },
+                        { text: 'Settings', onPress: () => Linking.openSettings() }
+                    ]
+                );
+                setRecordingSide(null);
+                return;
+            }
+
+            // Safety: Ensure fully stopped before starting
+            try {
+                await ExpoSpeechRecognitionModule.stop();
+            } catch (e) {
+                // Ignore errors from stopping when nothing is running
+            }
+
+            // Small delay to ensure clean state, then start
+            await new Promise(resolve => setTimeout(resolve, 100));
+
             const langCode = side === 'source' ? sourceLanguage.code : targetLanguage.code;
-            ExpoSpeechRecognitionModule.start({
-                lang: langCode,
-                interimResults: true,
-            });
+
+            // Check for offline support (Safety check)
+            let supportsOffline = false;
+            try {
+                if (typeof ExpoSpeechRecognitionModule.supportsOnDeviceRecognition === 'function') {
+                    supportsOffline = await ExpoSpeechRecognitionModule.supportsOnDeviceRecognition(langCode);
+                }
+            } catch (err) {
+                console.warn('Error checking offline support:', err);
+            }
+
+            try {
+                await ExpoSpeechRecognitionModule.start({
+                    lang: langCode,
+                    interimResults: true,
+                    requiresOnDeviceRecognition: supportsOffline,
+                });
+            } catch (err) {
+                console.warn('Offline/Preferred start failed, retrying with defaults:', err);
+                // Fallback
+                await ExpoSpeechRecognitionModule.start({
+                    lang: langCode,
+                    interimResults: true,
+                    requiresOnDeviceRecognition: false,
+                });
+            }
+
+            // Set recording state immediately after start
+            setIsRecording(true);
+
         } catch (e) {
-            console.error('Failed to start recording', e);
+            console.error("Mic Error", e);
+            Alert.alert("Microphone Error", "Failed to start recording.");
+            setIsRecording(false);
+            setRecordingSide(null);
         }
     };
 
@@ -209,6 +299,12 @@ export default function TranslateScreen() {
         setIsPickerVisible(false);
     };
 
+    const speakTargetText = () => {
+        if (targetText) {
+            Speech.speak(targetText, { language: targetLanguage.code });
+        }
+    };
+
     return (
         <SafeAreaView style={styles.container}>
             <TouchableWithoutFeedback onPress={Keyboard.dismiss}>
@@ -239,12 +335,24 @@ export default function TranslateScreen() {
                                         <Ionicons name="chevron-down" size={16} color="#666" />
                                     </TouchableOpacity>
 
+                                    <TouchableOpacity
+                                        style={[styles.micButton, isRecording && recordingSide === 'source' && styles.micActive]}
+                                        onPress={() => toggleRecording('source')}
+                                    >
+                                        <Animated.View style={isRecording && recordingSide === 'source' && { transform: [{ scale: pulseAnim }] }}>
+                                            <Ionicons
+                                                name={isRecording && recordingSide === 'source' ? "mic" : "mic-outline"}
+                                                size={24}
+                                                color={isRecording && recordingSide === 'source' ? "white" : CYAN_ACCENT}
+                                            />
+                                        </Animated.View>
+                                    </TouchableOpacity>
                                 </View>
 
                                 <View style={styles.inputWrapper}>
                                     <TextInput
                                         style={styles.textInput}
-                                        placeholder="Type something..."
+                                        placeholder={getPlaceholder(sourceLanguage.code)}
                                         placeholderTextColor="#BBB"
                                         multiline
                                         value={sourceText}
@@ -252,18 +360,6 @@ export default function TranslateScreen() {
                                         textAlignVertical="top"
                                     />
                                     <View style={styles.actionColumn}>
-                                        <TouchableOpacity
-                                            style={[styles.micButton, isRecording && recordingSide === 'source' && styles.micActive]}
-                                            onPress={() => toggleRecording('source')}
-                                        >
-                                            <Animated.View style={isRecording && recordingSide === 'source' && { transform: [{ scale: pulseAnim }] }}>
-                                                <Ionicons
-                                                    name={isRecording && recordingSide === 'source' ? "mic" : "mic-outline"}
-                                                    size={24}
-                                                    color={isRecording && recordingSide === 'source' ? "white" : CYAN_ACCENT}
-                                                />
-                                            </Animated.View>
-                                        </TouchableOpacity>
                                         {sourceText.length > 0 && (
                                             <TouchableOpacity onPress={() => setSourceText('')} style={styles.clearBtn}>
                                                 <Ionicons name="close-circle" size={18} color="#EEE" />
@@ -292,6 +388,13 @@ export default function TranslateScreen() {
                                         <Text style={styles.languageText}>{targetLanguage.name}</Text>
                                         <Ionicons name="chevron-down" size={16} color="#666" />
                                     </TouchableOpacity>
+
+                                    <TouchableOpacity
+                                        style={styles.micButton}
+                                        onPress={speakTargetText}
+                                    >
+                                        <Ionicons name="volume-high-outline" size={24} color={CYAN_ACCENT} />
+                                    </TouchableOpacity>
                                 </View>
 
                                 <View style={styles.inputWrapper}>
@@ -305,18 +408,6 @@ export default function TranslateScreen() {
                                         )}
                                     </ScrollView>
                                     <View style={styles.actionColumn}>
-                                        <TouchableOpacity
-                                            style={[styles.micButton, isRecording && recordingSide === 'target' && styles.micActive]}
-                                            onPress={() => toggleRecording('target')}
-                                        >
-                                            <Animated.View style={isRecording && recordingSide === 'target' && { transform: [{ scale: pulseAnim }] }}>
-                                                <Ionicons
-                                                    name={isRecording && recordingSide === 'target' ? "mic" : "mic-outline"}
-                                                    size={24}
-                                                    color={isRecording && recordingSide === 'target' ? "white" : CYAN_ACCENT}
-                                                />
-                                            </Animated.View>
-                                        </TouchableOpacity>
                                         {targetText.length > 0 && (
                                             <TouchableOpacity style={styles.clearBtn} onPress={() => { setTargetText(''); setSourceText(''); }}>
                                                 <Ionicons name="trash-outline" size={18} color="#EEE" />
@@ -398,6 +489,13 @@ const styles = StyleSheet.create({
     content: {
         paddingHorizontal: 20,
         flex: 1,
+    },
+    pageTitle: {
+        fontSize: 24,
+        fontWeight: '600',
+        color: '#333',
+        marginBottom: 16,
+        marginTop: 8,
     },
     mainCard: {
         backgroundColor: 'white',

@@ -1,5 +1,5 @@
 import { Ionicons } from '@expo/vector-icons';
-import { Image } from 'expo-image';
+import NetInfo from '@react-native-community/netinfo';
 import { useRouter } from 'expo-router';
 import * as Speech from 'expo-speech';
 import { useEffect, useRef, useState } from 'react';
@@ -8,11 +8,13 @@ import {
     Animated,
     Dimensions,
     FlatList,
+    Image,
     Keyboard,
     KeyboardAvoidingView,
     Modal,
     Platform,
     Pressable,
+    ScrollView,
     StyleSheet,
     Text,
     TextInput,
@@ -55,10 +57,12 @@ export default function ConversationScreen() {
     // Modal State
     const [modalVisible, setModalVisible] = useState(false);
     const [selectingSide, setSelectingSide] = useState<'left' | 'right'>('right');
+    const [showMenu, setShowMenu] = useState(false);
 
     const [messages, setMessages] = useState<ChatMessage[]>([]);
     const [currentTranscript, setCurrentTranscript] = useState('');
     const [isTranslating, setIsTranslating] = useState(false);
+    const [playingMessageId, setPlayingMessageId] = useState<string | null>(null);
 
     // Drafting State (Typing)
     const [inputLeft, setInputLeft] = useState('');
@@ -71,6 +75,38 @@ export default function ConversationScreen() {
     const pulseAnimRight = useRef(new Animated.Value(1)).current;
 
     const flatListRef = useRef<FlatList>(null);
+    // Data Refs for Event Listeners (avoids stale closures)
+    const currentTranscriptRef = useRef<string>('');
+    const recordingSideRef = useRef<'left' | 'right' | null>(null);
+
+    // Keyboard-aware positioning for input bubbles
+    const [keyboardVisible, setKeyboardVisible] = useState(false);
+    const [focusedInput, setFocusedInput] = useState<'left' | 'right' | null>(null);
+
+    useEffect(() => {
+        const keyboardDidShowListener = Keyboard.addListener('keyboardDidShow', () => {
+            setKeyboardVisible(true);
+        });
+        const keyboardDidHideListener = Keyboard.addListener('keyboardDidHide', () => {
+            setKeyboardVisible(false);
+            setFocusedInput(null);
+        });
+
+        return () => {
+            keyboardDidShowListener.remove();
+            keyboardDidHideListener.remove();
+        };
+    }, []);
+
+    // Sync ref when state changes (or set it manually where crucial)
+    useEffect(() => {
+        recordingSideRef.current = recordingSide;
+    }, [recordingSide]);
+
+    // Dynamic margin removed - relying on KeyboardAvoidingView structure
+    const getInputBubbleMargin = (side: 'left' | 'right') => {
+        return 0;
+    };
 
     // Live Translation Debounce
     useEffect(() => {
@@ -132,26 +168,46 @@ export default function ConversationScreen() {
     }, [isRecording, recordingSide]);
 
     // --- Speech Recognition Events ---
-    useSpeechRecognitionEvent('start', () => setIsRecording(true));
+    // --- Speech Recognition Events ---
+    // --- Speech Recognition Events ---
+    useSpeechRecognitionEvent('start', () => {
+        setIsRecording(true);
+        currentTranscriptRef.current = '';
+    });
     useSpeechRecognitionEvent('end', () => {
         setIsRecording(false);
-        if (currentTranscript.trim()) {
-            handleFinalizeMessage(currentTranscript, recordingSide!);
+        // Use the ref value to ensure we have the very latest text and side
+        const finalTranscript = currentTranscriptRef.current;
+        const currentSide = recordingSideRef.current; // Use Ref
+
+        console.log('End event fired. Transcript:', finalTranscript, 'Side (Ref):', currentSide);
+
+        if (finalTranscript && finalTranscript.trim()) {
+            if (currentSide) {
+                handleFinalizeMessage(finalTranscript, currentSide);
+            } else {
+                console.warn('Recording side was null at end event');
+            }
         }
         setRecordingSide(null);
+        recordingSideRef.current = null;
         setCurrentTranscript('');
+        currentTranscriptRef.current = '';
     });
     useSpeechRecognitionEvent('result', (event: any) => {
         const transcript = event.results?.[0]?.transcript;
         if (transcript) {
+            currentTranscriptRef.current = transcript;
             setCurrentTranscript(transcript);
         }
     });
 
     useSpeechRecognitionEvent('error', (event: any) => {
         console.log('Speech error:', event);
+        Alert.alert('Speech Error', event.message || JSON.stringify(event));
         setIsRecording(false);
         setRecordingSide(null);
+        recordingSideRef.current = null;
         setCurrentTranscript('');
     });
 
@@ -218,28 +274,114 @@ export default function ConversationScreen() {
     };
 
     const toggleListening = async (side: 'left' | 'right') => {
+        // STOP Logic
         if (isRecording && recordingSide === side) {
+            console.log('Stopping recording for side:', side);
             ExpoSpeechRecognitionModule.stop();
+            // Don't clear state here - let the 'end' event handle it
+            // This ensures recordingSide is still available when auto-sending
             return;
         }
+
+        // If recording different side, stop it first
+        if (isRecording && recordingSide !== side) {
+            console.log('Switching sides, stopping current recording');
+            ExpoSpeechRecognitionModule.stop();
+            await new Promise(resolve => setTimeout(resolve, 250));
+        }
+
+        // START Logic
+        console.log('Starting recording for side:', side);
         setRecordingSide(side);
+        recordingSideRef.current = side; // Set Ref explicitly
         setCurrentTranscript('');
+
+        // Clear any existing text in the input when starting to record
+        if (side === 'left') {
+            setInputLeft('');
+            setDraftTransLeft('');
+        } else {
+            setInputRight('');
+            setDraftTransRight('');
+        }
+
+        // Stop TTS to free audio resource
+        Speech.stop();
 
         try {
             const result = await ExpoSpeechRecognitionModule.requestPermissionsAsync();
             if (!result.granted) {
                 Alert.alert('Permission denied', 'Microphone access is required.');
+                setRecordingSide(null);
+                recordingSideRef.current = null;
                 return;
             }
+
+            // Safety: Ensure fully stopped before starting
+            try {
+                await ExpoSpeechRecognitionModule.stop();
+            } catch (e) {
+                // Ignore errors from stopping when nothing is running
+            }
+
+            // Small delay to ensure clean state
+            await new Promise(resolve => setTimeout(resolve, 150));
+
             const langCode = side === 'left' ? leftLang.code : rightLang.code;
-            ExpoSpeechRecognitionModule.start({
-                lang: langCode,
-                interimResults: true,
-                requiresOnDeviceRecognition: true, // Attempt to force offline mode
-            });
+            console.log('Calling start() with lang:', langCode);
+
+            // Determine network state to choose mode
+            const netInfo = await NetInfo.fetch();
+            const isOffline = netInfo.isInternetReachable === false;
+
+            console.log(`Starting Speech (Offline Mode: ${isOffline})`);
+
+            try {
+                // If offline, force on-device (requires pack).
+                // If online, use default (allows online processing).
+                await ExpoSpeechRecognitionModule.start({
+                    lang: langCode,
+                    interimResults: true,
+                    continuous: true,
+                    maxAlternatives: 1,
+                    requiresOnDeviceRecognition: isOffline,
+                });
+            } catch (err) {
+                console.log('Initial speech start failed:', err);
+
+                // If we tried Online/Default and it failed, try forcing Offline as fallback
+                if (!isOffline) {
+                    console.log('Retrying with offline mode forced...');
+                    await ExpoSpeechRecognitionModule.start({
+                        lang: langCode,
+                        interimResults: true,
+                        continuous: true,
+                        maxAlternatives: 1,
+                        requiresOnDeviceRecognition: true,
+                    });
+                } else {
+                    // If we already tried offline and it failed (e.g. no pack), re-throw
+                    throw err;
+                }
+            }
+
+            // Don't set isRecording here - let the 'start' event handle it
+            console.log('Start() called, waiting for start event');
+
         } catch (e) {
-            console.error(e);
+            console.error("Mic Error:", e);
+            Alert.alert("Microphone Error", "Failed to start recording. Please try again.");
+            setIsRecording(false);
+            setRecordingSide(null);
+            recordingSideRef.current = null;
         }
+    };
+
+
+
+    const clearConversation = () => {
+        setMessages([]);
+        setShowMenu(false);
     };
 
     const submitText = (side: 'left' | 'right') => {
@@ -266,8 +408,16 @@ export default function ConversationScreen() {
         setModalVisible(false);
     };
 
-    const playAudio = (text: string, langCode: string) => {
-        if (text) Speech.speak(text, { language: langCode });
+    const playAudio = (text: string, langCode: string, messageId: string) => {
+        if (text) {
+            setPlayingMessageId(messageId);
+            Speech.speak(text, {
+                language: langCode,
+                onDone: () => setPlayingMessageId(null),
+                onStopped: () => setPlayingMessageId(null),
+                onError: () => setPlayingMessageId(null),
+            });
+        }
     };
 
     const renderMessage = ({ item }: { item: ChatMessage }) => {
@@ -279,13 +429,18 @@ export default function ConversationScreen() {
                 {/* Play Button for Right Interaction (User) - Positioned LEFT of bubble */}
                 {isRight && (
                     <TouchableOpacity
-                        style={[styles.playButton, { marginRight: 8 }]}
+                        style={[styles.playButton, { marginRight: 8 }, playingMessageId === item.id && styles.playButtonActive]}
                         onPress={() => {
-                            Speech.stop();
-                            playAudio(item.translation || item.text, targetLangObj.code);
+                            if (playingMessageId === item.id) {
+                                Speech.stop();
+                                setPlayingMessageId(null);
+                            } else {
+                                Speech.stop();
+                                playAudio(item.translation || item.text, targetLangObj.code, item.id);
+                            }
                         }}
                     >
-                        <Ionicons name="play" size={20} color="white" />
+                        <Ionicons name={playingMessageId === item.id ? "pause" : "play"} size={20} color="white" />
                     </TouchableOpacity>
                 )}
 
@@ -303,139 +458,196 @@ export default function ConversationScreen() {
                 {/* Play Button for Left Interaction (Partner) - Positioned RIGHT of bubble */}
                 {!isRight && (
                     <TouchableOpacity
-                        style={[styles.playButton, { marginLeft: 8 }]}
+                        style={[styles.playButton, { marginLeft: 8 }, playingMessageId === item.id && styles.playButtonActive]}
                         onPress={() => {
-                            Speech.stop();
-                            playAudio(item.translation || item.text, targetLangObj.code);
+                            if (playingMessageId === item.id) {
+                                Speech.stop();
+                                setPlayingMessageId(null);
+                            } else {
+                                Speech.stop();
+                                playAudio(item.translation || item.text, targetLangObj.code, item.id);
+                            }
                         }}
                     >
-                        <Ionicons name="play" size={20} color="white" />
+                        <Ionicons name={playingMessageId === item.id ? "pause" : "play"} size={20} color="white" />
                     </TouchableOpacity>
                 )}
             </View>
         );
     };
 
+    const inputArea = (
+        <ScrollView
+            style={[styles.inputPreviewContainer, { paddingBottom: focusedInput === 'right' ? -130 : -80 }]}
+            contentContainerStyle={{ flexGrow: 1 }}
+            showsVerticalScrollIndicator={false}
+            keyboardShouldPersistTaps="handled"
+            nestedScrollEnabled={true}
+        >
+
+            {/* Right Input (English) - Interactive */}
+            <View style={[styles.inputBubble, styles.inputRight, { marginBottom: 15 }]}>
+                <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' }}>
+                    <TouchableOpacity onPress={() => openLanguagePicker('right')} style={styles.langHeader}>
+                        <Text style={styles.langTitle}>{rightLang.name}</Text>
+                        <Ionicons name="chevron-expand" size={12} color="#999" />
+                    </TouchableOpacity>
+                    {inputRight.length > 0 && !isRecording && (
+                        <TouchableOpacity onPress={() => submitText('right')} style={{ padding: 4 }}>
+                            <Ionicons name="send" size={20} color="#61D8D8" />
+                        </TouchableOpacity>
+                    )}
+                </View>
+
+                {isRecording && recordingSide === 'right' ? (
+                    <Text style={[styles.liveTranscript, { fontWeight: currentTranscript ? '700' : '400' }]}>
+                        {currentTranscript || 'Listening...'}
+                    </Text>
+                ) : (
+                    <View>
+                        <TextInput
+                            style={styles.textInput}
+                            value={inputRight}
+                            onChangeText={setInputRight}
+                            onFocus={() => setFocusedInput('right')}
+                            onBlur={() => setFocusedInput(null)}
+                            placeholder="Enter text"
+                            placeholderTextColor="#CCC"
+                            returnKeyType="done"
+                            onSubmitEditing={() => submitText('right')}
+                            multiline
+                            scrollEnabled={true}
+                            maxLength={200}
+                        />
+                        {inputRight.length > 0 && draftTransRight ? (
+                            <Text style={styles.draftTranslation}>{draftTransRight}</Text>
+                        ) : null}
+                    </View>
+                )}
+                <View style={styles.bubbleTailRight} />
+            </View>
+
+            {/* Left Input (Spanish) - Interactive */}
+            <View style={[styles.inputBubble, styles.inputLeft, { marginBottom: 15 }]}>
+                <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' }}>
+                    <TouchableOpacity onPress={() => openLanguagePicker('left')} style={styles.langHeader}>
+                        <Text style={styles.langTitle}>{leftLang.name}</Text>
+                        <Ionicons name="chevron-expand" size={12} color="#999" />
+                    </TouchableOpacity>
+                    {inputLeft.length > 0 && !isRecording && (
+                        <TouchableOpacity onPress={() => submitText('left')} style={{ padding: 4 }}>
+                            <Ionicons name="send" size={20} color="#61D8D8" />
+                        </TouchableOpacity>
+                    )}
+                </View>
+
+                {isRecording && recordingSide === 'left' ? (
+                    <Text style={[styles.liveTranscript, { fontWeight: currentTranscript ? '700' : '400' }]}>
+                        {currentTranscript || 'Listening...'}
+                    </Text>
+                ) : (
+                    <View>
+                        <TextInput
+                            style={styles.textInput}
+                            value={inputLeft}
+                            onChangeText={setInputLeft}
+                            onFocus={() => setFocusedInput('left')}
+                            onBlur={() => setFocusedInput(null)}
+                            placeholder="Introducir texto"
+                            placeholderTextColor="#CCC"
+                            returnKeyType="done"
+                            onSubmitEditing={() => submitText('left')}
+                            multiline
+                            scrollEnabled={true}
+                            maxLength={200}
+                        />
+                        {inputLeft.length > 0 && draftTransLeft ? (
+                            <Text style={styles.draftTranslation}>{draftTransLeft}</Text>
+                        ) : null}
+                    </View>
+                )}
+                <View style={styles.bubbleTailLeft} />
+            </View>
+
+        </ScrollView>
+    );
+
     return (
         <SafeAreaView style={styles.container}>
-            {/* Header with Logo as requested */}
+            {/* Header */}
             <View style={styles.header}>
                 <Image
                     source={require('../../assets/images/image.png')}
                     style={styles.logo}
-                    contentFit="contain"
+                    resizeMode="contain"
                 />
-            </View>
+                <TouchableOpacity
+                    style={styles.menuButton}
+                    onPress={() => setShowMenu(prev => !prev)}
+                >
+                    <Ionicons name="ellipsis-vertical" size={24} color="#333" />
+                </TouchableOpacity>
 
+                {showMenu && (
+                    <View style={styles.menuDropdown}>
+                        <TouchableOpacity style={styles.menuItem} onPress={clearConversation}>
+                            <Text style={styles.menuItemText}>Clear Conversation</Text>
+                            <Ionicons name="trash-outline" size={20} color="#ff3b30" />
+                        </TouchableOpacity>
+                    </View>
+                )}
+            </View>
+            {/* Chat Area */}
             <KeyboardAvoidingView
                 style={styles.content}
-                behavior={Platform.OS === 'ios' ? 'padding' : undefined}
-                keyboardVerticalOffset={Platform.OS === 'ios' ? 90 : 0}
+                behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
+                keyboardVerticalOffset={0}
             >
                 <FlatList
                     ref={flatListRef}
+                    style={{ flex: 1 }}
                     data={[...messages].reverse()}
                     renderItem={renderMessage}
                     keyExtractor={item => item.id}
                     inverted
-                    contentContainerStyle={{ paddingBottom: 20 }}
-                    showsVerticalScrollIndicator={false}
+                    contentContainerStyle={{ paddingBottom: 30 }}
+                    showsVerticalScrollIndicator={true}
+                    keyboardShouldPersistTaps="handled"
+                    keyboardDismissMode="on-drag"
+                    ListHeaderComponent={inputArea}
                 />
 
-                {/* Input Previews (Drafting Area) */}
-                <View style={styles.inputPreviewContainer}>
+                {/* Controls - Hidden when keyboard visible */}
+                {!keyboardVisible && (
+                    <View style={styles.controlsArea}>
 
-                    {/* Right Input (English) - Interactive */}
-                    <View style={[styles.inputBubble, styles.inputRight]}>
-                        <TouchableOpacity onPress={() => openLanguagePicker('right')} style={styles.langHeader}>
-                            <Text style={styles.langTitle}>{rightLang.name}</Text>
-                            <Ionicons name="chevron-expand" size={12} color="#999" />
-                        </TouchableOpacity>
+                        {/* Left Mic */}
+                        <View style={styles.controlWrapper}>
+                            <TouchableOpacity
+                                style={[styles.roundButton, isRecording && recordingSide === 'left' && styles.micActive]}
+                                onPress={() => toggleListening('left')}
+                            >
+                                <Animated.View style={{ transform: [{ scale: pulseAnimLeft }] }}>
+                                    <Ionicons name={isRecording && recordingSide === 'left' ? "stop" : "mic"} size={28} color="white" />
+                                </Animated.View>
+                            </TouchableOpacity>
+                            <Text style={styles.controlLabel}>{leftLang.name.split(' ')[0]}</Text>
+                        </View>
 
-                        {isRecording && recordingSide === 'right' ? (
-                            <Text style={styles.liveTranscript}>{currentTranscript || 'Listening...'}</Text>
-                        ) : (
-                            <View>
-                                <TextInput
-                                    style={styles.textInput}
-                                    value={inputRight}
-                                    onChangeText={setInputRight}
-                                    placeholder="Enter text"
-                                    placeholderTextColor="#CCC"
-                                    returnKeyType="done"
-                                    onSubmitEditing={() => submitText('right')}
-                                    multiline
-                                    maxLength={200}
-                                />
-                                {inputRight.length > 0 && draftTransRight ? (
-                                    <Text style={styles.draftTranslation}>{draftTransRight}</Text>
-                                ) : null}
-                            </View>
-                        )}
-                        <View style={styles.bubbleTailRight} />
+                        {/* Right Mic */}
+                        <View style={styles.controlWrapper}>
+                            <TouchableOpacity
+                                style={[styles.roundButton, isRecording && recordingSide === 'right' && styles.micActive]}
+                                onPress={() => toggleListening('right')}
+                            >
+                                <Animated.View style={{ transform: [{ scale: pulseAnimRight }] }}>
+                                    <Ionicons name={isRecording && recordingSide === 'right' ? "stop" : "headset"} size={28} color="white" />
+                                </Animated.View>
+                            </TouchableOpacity>
+                            <Text style={styles.controlLabel}>{rightLang.name.split(' ')[0]}</Text>
+                        </View>
                     </View>
-
-                    {/* Left Input (Spanish) - Interactive */}
-                    <View style={[styles.inputBubble, styles.inputLeft]}>
-                        <TouchableOpacity onPress={() => openLanguagePicker('left')} style={styles.langHeader}>
-                            <Text style={styles.langTitle}>{leftLang.name}</Text>
-                            <Ionicons name="chevron-expand" size={12} color="#999" />
-                        </TouchableOpacity>
-
-                        {isRecording && recordingSide === 'left' ? (
-                            <Text style={styles.liveTranscript}>{currentTranscript || 'Listening...'}</Text>
-                        ) : (
-                            <View>
-                                <TextInput
-                                    style={styles.textInput}
-                                    value={inputLeft}
-                                    onChangeText={setInputLeft}
-                                    placeholder="Introducir texto"
-                                    placeholderTextColor="#CCC"
-                                    returnKeyType="done"
-                                    onSubmitEditing={() => submitText('left')}
-                                    multiline
-                                    maxLength={200}
-                                />
-                                {inputLeft.length > 0 && draftTransLeft ? (
-                                    <Text style={styles.draftTranslation}>{draftTransLeft}</Text>
-                                ) : null}
-                            </View>
-                        )}
-                        <View style={styles.bubbleTailLeft} />
-                    </View>
-
-                </View>
-
-                {/* Controls */}
-                <View style={styles.controlsArea}>
-
-                    {/* Left Mic */}
-                    <View style={styles.controlWrapper}>
-                        <TouchableOpacity
-                            style={[styles.roundButton, isRecording && recordingSide === 'left' && styles.micActive]}
-                            onPress={() => toggleListening('left')}
-                        >
-                            <Animated.View style={{ transform: [{ scale: pulseAnimLeft }] }}>
-                                <Ionicons name={isRecording && recordingSide === 'left' ? "stop" : "mic"} size={28} color="white" />
-                            </Animated.View>
-                        </TouchableOpacity>
-                        <Text style={styles.controlLabel}>{leftLang.name.split(' ')[0]}</Text>
-                    </View>
-
-                    {/* Right Mic */}
-                    <View style={styles.controlWrapper}>
-                        <TouchableOpacity
-                            style={[styles.roundButton, isRecording && recordingSide === 'right' && styles.micActive]}
-                            onPress={() => toggleListening('right')}
-                        >
-                            <Animated.View style={{ transform: [{ scale: pulseAnimRight }] }}>
-                                <Ionicons name={isRecording && recordingSide === 'right' ? "stop" : "headset"} size={28} color="white" />
-                            </Animated.View>
-                        </TouchableOpacity>
-                        <Text style={styles.controlLabel}>{rightLang.name.split(' ')[0]}</Text>
-                    </View>
-                </View>
+                )}
             </KeyboardAvoidingView>
 
             {/* Language Modal */}
@@ -470,8 +682,8 @@ export default function ConversationScreen() {
                         />
                     </View>
                 </Pressable>
-            </Modal>
-        </SafeAreaView>
+            </Modal >
+        </SafeAreaView >
     );
 }
 
@@ -482,14 +694,18 @@ const styles = StyleSheet.create({
     },
     header: {
         width: '100%',
+        flexDirection: 'row',
         alignItems: 'center',
+        justifyContent: 'center',
         paddingVertical: 10,
         backgroundColor: '#F2F2F7',
         zIndex: 10,
+        position: 'relative',
     },
     logo: {
         width: 140,
         height: 40,
+        marginTop: 10,
     },
     content: {
         flex: 1,
@@ -528,8 +744,8 @@ const styles = StyleSheet.create({
     },
     msgDivider: {
         height: 1,
-        backgroundColor: '#F0F0F0',
-        marginVertical: 6,
+        backgroundColor: '#D1D1D6',
+        marginVertical: 8,
         width: '100%',
     },
     msgTranslation: {
@@ -547,6 +763,10 @@ const styles = StyleSheet.create({
         shadowColor: '#00C4CC',
         shadowOpacity: 0.3,
         shadowRadius: 4,
+    },
+    playButtonActive: {
+        backgroundColor: '#FF9500',
+        shadowColor: '#FF9500',
     },
 
     // Bubble Tails
@@ -580,7 +800,7 @@ const styles = StyleSheet.create({
     // Input Area
     inputPreviewContainer: {
         flexDirection: 'column',
-        marginBottom: 20,
+        paddingBottom: -80,
         marginTop: 10,
     },
     inputBubble: {
@@ -610,9 +830,13 @@ const styles = StyleSheet.create({
     },
     textInput: {
         fontSize: 16,
-        fontWeight: '600',
+        fontWeight: '700',
         color: '#000',
         minHeight: 24,
+        maxHeight: 100,
+        padding: 0,
+        margin: 0,
+        textAlignVertical: 'top',
     },
     draftTranslation: {
         marginTop: 8,
@@ -621,16 +845,54 @@ const styles = StyleSheet.create({
         color: '#00C4CC',
     },
     liveTranscript: {
-        color: '#000',
         fontSize: 16,
-        marginTop: 4,
+        fontWeight: '400',
+        color: '#000',
+        minHeight: 24,
     },
     // Controls
     controlsArea: {
         flexDirection: 'row',
         justifyContent: 'center',
-        marginBottom: 65, // Increased by 10px
+        marginBottom: 45,
         gap: 20,
+    },
+    // ...
+    // Menu Button
+    menuButton: {
+        position: 'absolute',
+        right: 20,
+        top: 20,
+        padding: 5,
+        zIndex: 20,
+    },
+    menuDropdown: {
+        position: 'absolute',
+        top: 60,
+        right: 20,
+        backgroundColor: 'white',
+        borderRadius: 12,
+        padding: 8,
+        shadowColor: '#000',
+        shadowOffset: { width: 0, height: 2 },
+        shadowOpacity: 0.2,
+        shadowRadius: 8,
+        elevation: 5,
+        zIndex: 50,
+        minWidth: 180,
+    },
+    menuItem: {
+        flexDirection: 'row',
+        alignItems: 'center',
+        justifyContent: 'space-between',
+        paddingVertical: 10,
+        paddingHorizontal: 12,
+    },
+    menuItemText: {
+        fontSize: 14,
+        fontWeight: '600',
+        color: '#ff3b30',
+        marginRight: 8,
     },
     controlWrapper: {
         alignItems: 'center',

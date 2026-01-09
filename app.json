@@ -7,13 +7,14 @@
     "icon": "./assets/images/icon.png",
     "scheme": "travlate",
     "userInterfaceStyle": "automatic",
-    "newArchEnabled": false,
+    "newArchEnabled": true,
     "ios": {
       "supportsTablet": true,
       "infoPlist": {
         "NSLocationWhenInUseUsageDescription": "This app needs access to location to show your current position on the map.",
         "NSSpeechRecognitionUsageDescription": "Allow Travlate to recognize and transcribe your speech.",
-        "NSMicrophoneUsageDescription": "Allow Travlate to access the microphone."
+        "NSMicrophoneUsageDescription": "Allow Travlate to access the microphone.",
+        "NSPhotoLibraryUsageDescription": "Allow Travlate to access your photo library to select images for translation."
       },
       "bundleIdentifier": "com.stevennnnnnn.travlate"
     },
@@ -28,14 +29,21 @@
         "ACCESS_FINE_LOCATION",
         "ACCESS_COARSE_LOCATION",
         "RECORD_AUDIO",
-        "android.permission.RECORD_AUDIO"
+        "android.permission.RECORD_AUDIO",
+        "INTERNET",
+        "android.permission.INTERNET",
+        "READ_MEDIA_IMAGES",
+        "android.permission.READ_MEDIA_IMAGES",
+        "READ_EXTERNAL_STORAGE",
+        "android.permission.READ_EXTERNAL_STORAGE"
       ],
       "config": {
         "googleMaps": {
-          "apiKey": "AIzaSyCD5yBOOEmumJJS8Cge21Tw68UNFzjnUKo"
+          "apiKey": "AIzaSyDxwn7-PZ8FGDkA6ecIcUCMIOP8ZIDU6KU"
         }
       },
-      "package": "com.stevennnnnnn.travlate"
+      "package": "com.stevennnnnnn.travlate",
+      "googleServicesFile": "./google-services.json"
     },
     "web": {
       "output": "static",
@@ -69,9 +77,16 @@
         "@jamsch/expo-speech-recognition",
         {
           "microphonePermission": "Allow Travlate to access the microphone.",
-          "speechRecognitionPermission": "Allow Travlate to recognize and transcribe your speech."
+          "speechRecognitionPermission": "Allow Travlate to recognize and transcribe your speech.",
+          "queries": [
+            {
+              "action": "android.intent.action.RECOGNIZE_SPEECH"
+            }
+          ]
         }
-      ]
+      ],
+      "@react-native-firebase/app",
+      "@react-native-firebase/auth"
     ],
     "experiments": {
       "typedRoutes": true,
